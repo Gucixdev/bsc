@@ -132,8 +132,11 @@ other:   /sys/class/hwmon/nouveau
 
 **syscall trace** (tried in order):
 ```
-bpftrace (eBPF, needs CAP_BPF/root) → strace (ptrace) → /proc/PID/syscall poll 10ms
+bpftrace (eBPF, CAP_BPF/root) → perf trace --cpu N (perf_event_paranoid<=2) → /proc poll 10ms
 ```
+shows 1-3 cores simultaneously depending on terminal width (≥150=3col ≥80=2col).
+bpftrace captures all cores at once (system-wide, no per-core subprocess).
+run-length encoded: `futex(...) ×8492` = process sleeping in that syscall.
 
 **disassembly:**
 ```
@@ -147,11 +150,13 @@ iwgetid → iw dev info → iwconfig → wpa_cli → wpa_cli -p /var/run/wpa_sup
 
 **audio:**
 ```
-ALSA:        /proc/asound (always, no tool)
-PipeWire:    pw-dump + wpctl
+ALSA:        /proc/asound + /proc/asound/*/pcm*/sub*/status (always, zero tools needed)
+             hw_params: rate, format, channels, period, buffer — from running PCM streams
+PipeWire:    pw-dump (per-channel vol, format, rate) + wpctl (vol control)
 WirePlumber: wpctl
-PulseAudio:  pactl
-JACK:        jack_lsp
+PulseAudio:  pactl (vol, mic, streams, sinks) — also works with pipewire-pulse
+JACK:        jack_lsp (port count)
+all servers shown simultaneously, green=running dim=installed-but-stopped
 ```
 
 **containers / VMs:**

@@ -97,11 +97,11 @@ _perf_proc        = None
 _perf_core_active = -1
 _perf_buf         = b''
 
-def _ensure_bpf(core):
-    # Start (or restart if core changed) a bpftrace subprocess.
-    # Returns the Popen object if running, None if bpftrace unavailable/failed.
-    global _bpf_proc, _bpf_core_active
-    if _bpf_proc and _bpf_core_active == core and _bpf_proc.poll() is None:
+def _ensure_bpf():
+    # Single system-wide bpftrace — no cpu filter, routes events to per-core rings.
+    # Format: cpu\tpid\tcomm\tsyscall_nr
+    global _bpf_proc
+    if _bpf_proc and _bpf_proc.poll() is None:
         return _bpf_proc
     if _bpf_proc:
         try: _bpf_proc.kill()
@@ -110,15 +110,13 @@ def _ensure_bpf(core):
     if not shutil.which('bpftrace'):
         return None
     try:
-        prog = (f"tracepoint:raw_syscalls:sys_enter /cpu == {core}/ "
-                f"{{ printf(\"%d\\t%s\\t%d\\n\", pid, comm, args->id); }}")
+        prog = ("tracepoint:raw_syscalls:sys_enter "
+                "{ printf(\"%d\\t%d\\t%s\\t%d\\n\", cpu, pid, comm, args->id); }")
         _bpf_proc = subprocess.Popen(
             ['bpftrace', '-e', prog],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        # non-blocking stdout so select() can timeout for core-change detection
         fl = fcntl.fcntl(_bpf_proc.stdout.fileno(), fcntl.F_GETFL)
         fcntl.fcntl(_bpf_proc.stdout.fileno(), fcntl.F_SETFL, fl | os.O_NONBLOCK)
-        _bpf_core_active = core
         return _bpf_proc
     except:
         _bpf_proc = None
@@ -1354,37 +1352,41 @@ def _ensure_perf(core):
         _perf_proc = None; return None
 
 def _core_sampler_loop():
-    # Level 1: bpftrace (eBPF, needs CAP_BPF/root) — event-driven, zero lag
-    # Level 2: perf trace --cpu N (needs perf, paranoid<=2) — event-driven
-    # Level 3: /proc/PID/stat field 39 (last_cpu) poll 10ms — always works
+    # Level 1: bpftrace system-wide (eBPF) — routes cpu\tpid\tcomm\tnr to per-core rings
+    # Level 2: perf trace --cpu N for the watched core + /proc for others
+    # Level 3: /proc/PID/stat field 39 scan — populates ALL core rings in one pass
     global _core_sampler_run, _perf_buf
     bpf_buf = b''
     while _core_sampler_run:
         core = _core_watch
-        ring = _core_rings.setdefault(core, collections.deque(maxlen=1000))
 
-        bpf = _ensure_bpf(core)
+        bpf = _ensure_bpf()
         if bpf and bpf.poll() is None:
             try:
                 ready = select.select([bpf.stdout], [], [], 0.05)
                 if ready[0]:
-                    bpf_buf += bpf.stdout.read(8192)
+                    bpf_buf += bpf.stdout.read(16384)
                 while b'\n' in bpf_buf:
                     line, bpf_buf = bpf_buf.split(b'\n', 1)
                     parts = line.decode(errors='replace').split('\t')
-                    if len(parts) >= 3:
-                        pid, comm, nr_s = parts[0].strip(), parts[1].strip(), parts[2].strip()
-                        try:    nr = int(nr_s)
+                    if len(parts) >= 4:
+                        try:   cn = int(parts[0].strip())
+                        except: continue
+                        pid  = parts[1].strip()
+                        comm = parts[2].strip()
+                        try:   nr = int(parts[3].strip())
                         except: nr = -1
-                        _rle_append(ring, f"{pid}:{comm[:12]}  {_SYSCALL_NAMES.get(nr, f'sys_{nr}')}")
+                        r = _core_rings.setdefault(cn, collections.deque(maxlen=1000))
+                        _rle_append(r, f"{pid}:{comm[:12]}  {_SYSCALL_NAMES.get(nr, f'sys_{nr}')}")
             except (BlockingIOError, OSError): pass
             continue
 
+        # perf trace for watched core, /proc for all others
         perf = _ensure_perf(core)
         if perf and perf.poll() is None:
-            # perf trace stderr format: "  0.000 comm/PID  syscall(args) = ret"
+            ring = _core_rings.setdefault(core, collections.deque(maxlen=1000))
             try:
-                ready = select.select([perf.stderr], [], [], 0.05)
+                ready = select.select([perf.stderr], [], [], 0.02)
                 if ready[0]:
                     _perf_buf += perf.stderr.read(8192)
                 while b'\n' in _perf_buf:
@@ -1394,9 +1396,8 @@ def _core_sampler_loop():
                     if m:
                         _rle_append(ring, f"{m.group(2)}:{m.group(1)[:12]}  {m.group(3)}")
             except (BlockingIOError, OSError): pass
-            continue
 
-        # /proc fallback: find all PIDs whose last_cpu == core
+        # /proc: scan ALL PIDs, populate every core's ring in one pass
         try:
             for pid in os.listdir('/proc'):
                 if not pid.isdigit(): continue
@@ -1404,8 +1405,9 @@ def _core_sampler_loop():
                     stat = open(f'/proc/{pid}/stat').read()
                     i = stat.rfind(')')
                     fields = stat[i+2:].split()
-                    if len(fields) <= 36 or int(fields[36]) != core: continue
-                    comm   = stat[stat.index('(')+1:i]
+                    if len(fields) <= 36: continue
+                    cn   = int(fields[36])
+                    comm = stat[stat.index('(')+1:i]
                     sc_raw = open(f'/proc/{pid}/syscall', errors='replace').read().strip()
                     if not sc_raw: continue
                     if sc_raw == 'running':
@@ -1414,9 +1416,9 @@ def _core_sampler_loop():
                         p    = sc_raw.split()
                         try: nr = int(p[0])
                         except: nr = -1
-                        name = _SYSCALL_NAMES.get(nr, f'sys_{nr}')
-                        sc_s = f"{name}({' '.join(p[1:5])})"
-                    _rle_append(ring, f"{pid}:{comm[:12]}  {sc_s}")
+                        sc_s = f"{_SYSCALL_NAMES.get(nr, f'sys_{nr}')}({' '.join(p[1:5])})"
+                    r = _core_rings.setdefault(cn, collections.deque(maxlen=1000))
+                    _rle_append(r, f"{pid}:{comm[:12]}  {sc_s}")
                 except: pass
         except: pass
         time.sleep(0.01)
@@ -2580,42 +2582,56 @@ def draw_dev(stdscr, state):
                     curses.color_pair(C_USB) | curses.A_DIM); row += 1
     except: pass
 
-    # SYSCALL TRACE — per-core view, 10ms /proc sampler, no ptrace
+    # SYSCALL TRACE — multi-core columns, 10ms sampler / eBPF / perf
     _core_sampler_start()
-    core_n    = state.get('core_trace', 0)
+    core_n  = state.get('core_trace', 0)
     global _core_watch
     _core_watch = core_n
-    n_cores   = len(state.get('cpu', ([],))[0]) or 1
-    if _bpf_proc  and _bpf_core_active  == core_n and _bpf_proc.poll()  is None: backend_lbl = 'eBPF'
-    elif _perf_proc and _perf_core_active == core_n and _perf_proc.poll() is None: backend_lbl = 'perf'
+    n_cores = len(state.get('cpu', ([],))[0]) or 1
+    if   _bpf_proc  and _bpf_proc.poll()  is None: backend_lbl = 'eBPF'
+    elif _perf_proc and _perf_proc.poll() is None: backend_lbl = 'perf'
     else: backend_lbl = '/proc'
+    # adaptive column count: 3 if wide, 2 if medium, 1 if narrow
+    n_cols  = 3 if W >= 150 else 2 if W >= 80 else 1
+    n_cols  = min(n_cols, n_cores - core_n)  # don't show cols past last core
+    n_cols  = max(1, n_cols)
+    col_w   = W // n_cols
     if row < H - 5:
+        cores_s = '-'.join(str(core_n + c) for c in range(n_cols))
         put(stdscr, row, 0,
-            (f"─── SYSCALL TRACE [core {core_n}/{n_cores-1}] [{backend_lbl}] [←→=core ↑↓=scroll] " + "─"*(W-20))[:W],
+            (f"─── SYSCALL TRACE [cores {cores_s}/{n_cores-1}] [{backend_lbl}] [←→=shift ↑↓=scroll] " + "─"*(W-20))[:W],
             curses.color_pair(C_HDR))
         row += 1
-    ring      = list(_core_rings.get(core_n, collections.deque()))
     sc_scroll = state.get('dev_scroll', 0)
     avail_sc  = max(0, H - row - 2)
-    entries   = list(reversed(ring))
-    sc_scroll = max(0, min(sc_scroll, max(0, len(entries) - avail_sc)))
-    state['dev_scroll'] = sc_scroll
-    for sc_line in entries[sc_scroll:sc_scroll + avail_sc]:
-        if row >= H - 2: break
-        if ' ×' in sc_line:
-            base, _, cnt = sc_line.rpartition(' ×')
-            put(stdscr, row, 1, base[:W-8], curses.color_pair(C_DISK))
-            cx = min(W-7, 1 + len(base))
-            put(stdscr, row, cx, f' ×{cnt}', curses.color_pair(C_SEL))
-        else:
-            put(stdscr, row, 1, sc_line[:W-1], curses.color_pair(C_DISK))
+    # draw column headers
+    if row < H - 3:
+        for c in range(n_cols):
+            cn = core_n + c
+            r  = _core_rings.get(cn, collections.deque())
+            put(stdscr, row, c * col_w, f" core {cn} [{len(r)}]"[:col_w], curses.color_pair(C_HDR) | curses.A_BOLD)
         row += 1
+    # draw entries side by side
+    for ri in range(avail_sc - 1):
+        r = row + ri
+        if r >= H - 2: break
+        for c in range(n_cols):
+            cn      = core_n + c
+            entries = list(reversed(_core_rings.get(cn, collections.deque())))
+            idx     = sc_scroll + ri
+            if idx >= len(entries): continue
+            sc_line = entries[idx]
+            x0 = c * col_w
+            if ' ×' in sc_line:
+                base, _, cnt = sc_line.rpartition(' ×')
+                put(stdscr, r, x0,              base[:col_w-6],             curses.color_pair(C_DISK))
+                put(stdscr, r, x0 + len(base[:col_w-6]), f' ×{cnt}'[:6],   curses.color_pair(C_SEL))
+            else:
+                put(stdscr, r, x0, sc_line[:col_w-1], curses.color_pair(C_DISK))
 
     _prev_dev.update({k: v for k, v in d.items() if isinstance(v, int)})
-    ring_n = len(ring)
     sc_pos = state.get('dev_scroll', 0)
-    hint = f" ←→=core [{core_n}]  ↑↓=scroll [{sc_pos+1}/{ring_n}]" if ring_n else \
-           f" ←→=core [{core_n}]  (sampler starting...)"
+    hint = f" ←→=shift cores [{core_n}..{core_n+n_cols-1}]  ↑↓=scroll [{sc_pos}]  [{backend_lbl}]"
     put(stdscr, H-2, 0, hint[:W], curses.color_pair(C_DISK))
     draw_rec_indicator(stdscr, H, W, state)
     draw_statusbar(stdscr, state)
