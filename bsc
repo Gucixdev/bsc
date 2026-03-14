@@ -92,6 +92,11 @@ _core_watch          = 0   # which core to sample right now
 _bpf_proc        = None
 _bpf_core_active = -1
 
+# perf trace backend — optional, needs perf + perf_event_paranoid<=2
+_perf_proc        = None
+_perf_core_active = -1
+_perf_buf         = b''
+
 def _ensure_bpf(core):
     # Start (or restart if core changed) a bpftrace subprocess.
     # Returns the Popen object if running, None if bpftrace unavailable/failed.
@@ -1326,33 +1331,70 @@ def _rle_append(ring, entry):
             ring[-1] = last + ' ×2'; return
     ring.append(entry)
 
+def _ensure_perf(core):
+    # perf trace --cpu N: per-core event-driven, needs perf + paranoid<=2
+    global _perf_proc, _perf_core_active, _perf_buf
+    if _perf_proc and _perf_core_active == core and _perf_proc.poll() is None:
+        return _perf_proc
+    if _perf_proc:
+        try: _perf_proc.kill()
+        except: pass
+        _perf_proc = None; _perf_buf = b''
+    if not shutil.which('perf'):
+        return None
+    try:
+        _perf_proc = subprocess.Popen(
+            ['perf', 'trace', '--cpu', str(core), '--no-pager', '-q'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        fl = fcntl.fcntl(_perf_proc.stderr.fileno(), fcntl.F_GETFL)
+        fcntl.fcntl(_perf_proc.stderr.fileno(), fcntl.F_SETFL, fl | os.O_NONBLOCK)
+        _perf_core_active = core
+        return _perf_proc
+    except:
+        _perf_proc = None; return None
+
 def _core_sampler_loop():
-    # Primary: bpftrace (event-driven, needs CAP_BPF/root) — zero polling lag.
-    # Fallback: scan /proc/PID/stat field 39 (last_cpu) every 10ms.
-    global _core_sampler_run
-    buf = b''  # leftover bytes from non-blocking bpftrace reads
+    # Level 1: bpftrace (eBPF, needs CAP_BPF/root) — event-driven, zero lag
+    # Level 2: perf trace --cpu N (needs perf, paranoid<=2) — event-driven
+    # Level 3: /proc/PID/stat field 39 (last_cpu) poll 10ms — always works
+    global _core_sampler_run, _perf_buf
+    bpf_buf = b''
     while _core_sampler_run:
         core = _core_watch
         ring = _core_rings.setdefault(core, collections.deque(maxlen=1000))
 
         bpf = _ensure_bpf(core)
         if bpf and bpf.poll() is None:
-            # drain whatever bpftrace wrote; 50ms timeout so we can detect core change
             try:
                 ready = select.select([bpf.stdout], [], [], 0.05)
                 if ready[0]:
-                    buf += bpf.stdout.read(8192)
-                while b'\n' in buf:
-                    line, buf = buf.split(b'\n', 1)
+                    bpf_buf += bpf.stdout.read(8192)
+                while b'\n' in bpf_buf:
+                    line, bpf_buf = bpf_buf.split(b'\n', 1)
                     parts = line.decode(errors='replace').split('\t')
                     if len(parts) >= 3:
                         pid, comm, nr_s = parts[0].strip(), parts[1].strip(), parts[2].strip()
                         try:    nr = int(nr_s)
                         except: nr = -1
-                        name = _SYSCALL_NAMES.get(nr, f'sys_{nr}')
-                        _rle_append(ring, f"{pid}:{comm[:12]}  {name}")
+                        _rle_append(ring, f"{pid}:{comm[:12]}  {_SYSCALL_NAMES.get(nr, f'sys_{nr}')}")
             except (BlockingIOError, OSError): pass
-            continue  # don't also poll /proc when bpf is active
+            continue
+
+        perf = _ensure_perf(core)
+        if perf and perf.poll() is None:
+            # perf trace stderr format: "  0.000 comm/PID  syscall(args) = ret"
+            try:
+                ready = select.select([perf.stderr], [], [], 0.05)
+                if ready[0]:
+                    _perf_buf += perf.stderr.read(8192)
+                while b'\n' in _perf_buf:
+                    line, _perf_buf = _perf_buf.split(b'\n', 1)
+                    s = line.decode(errors='replace').strip()
+                    m = re.match(r'[\d.]+\s+(\S+)/(\d+)\s+(\w+)\(', s)
+                    if m:
+                        _rle_append(ring, f"{m.group(2)}:{m.group(1)[:12]}  {m.group(3)}")
+            except (BlockingIOError, OSError): pass
+            continue
 
         # /proc fallback: find all PIDs whose last_cpu == core
         try:
@@ -2544,7 +2586,9 @@ def draw_dev(stdscr, state):
     global _core_watch
     _core_watch = core_n
     n_cores   = len(state.get('cpu', ([],))[0]) or 1
-    backend_lbl = 'eBPF' if (_bpf_proc and _bpf_core_active == core_n and _bpf_proc.poll() is None) else '/proc'
+    if _bpf_proc  and _bpf_core_active  == core_n and _bpf_proc.poll()  is None: backend_lbl = 'eBPF'
+    elif _perf_proc and _perf_core_active == core_n and _perf_proc.poll() is None: backend_lbl = 'perf'
+    else: backend_lbl = '/proc'
     if row < H - 5:
         put(stdscr, row, 0,
             (f"─── SYSCALL TRACE [core {core_n}/{n_cores-1}] [{backend_lbl}] [←→=core ↑↓=scroll] " + "─"*(W-20))[:W],

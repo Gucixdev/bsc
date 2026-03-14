@@ -120,31 +120,51 @@ Run-length encoded: `futex(...) ×8492` shows how long a process sleeps.
 
 ## optional tools
 
-Everything is optional — bsc degrades gracefully when tools are missing.
+Everything is optional — bsc degrades gracefully. Fallback chains below.
 
-| tool | used for |
-|------|---------|
-| `bpftrace` | eBPF syscall trace per core (needs CAP_BPF/root) |
-| `ndisasm` | disassembly in DEV (preferred) |
-| `objdump` | disassembly in DEV (fallback) |
-| `nvidia-smi` | NVIDIA GPU: vram, util, temp, power, fan, clocks |
-| `rocm-smi` | AMD GPU stats |
-| `/sys/class/hwmon` | CPU/GPU temps, fans (no tool needed) |
-| `pw-dump` | PipeWire per-channel volumes, format, sample rate |
-| `wpctl` | WirePlumber volume control |
-| `pactl` | PulseAudio / pipewire-pulse: vol, mic, sinks, streams |
-| `jack_lsp` | JACK audio port count |
-| `iw` | WiFi SSID + signal strength |
-| `iwgetid` | WiFi SSID fallback |
-| `iwconfig` | WiFi SSID fallback |
-| `wpa_cli` | WiFi SSID fallback |
-| `nmcli` | WiFi SSID fallback |
-| `podman` | container list (all states) |
-| `docker` | container list (all states) |
-| `qm` | Proxmox VM list |
-| `pct` | Proxmox LXC list |
-| `smartctl` | disk SMART health |
-| `strace` | (unused — replaced by eBPF+/proc) |
+**GPU** (tried in order, first that works wins):
+```
+NVIDIA:  nvidia-smi → libnvidia-ml.so (ctypes, no binary) → /proc/driver/nvidia → /sys/class/hwmon
+AMD:     rocm-smi   → /sys/class/hwmon/amdgpu + /sys/class/drm/*/gpu_busy_percent
+Intel:   /sys/class/hwmon/i915
+other:   /sys/class/hwmon/nouveau
+```
+
+**syscall trace** (tried in order):
+```
+bpftrace (eBPF, needs CAP_BPF/root) → strace (ptrace) → /proc/PID/syscall poll 10ms
+```
+
+**disassembly:**
+```
+ndisasm → objdump
+```
+
+**WiFi SSID** (tried in order, parallel):
+```
+iwgetid → iw dev info → iwconfig → wpa_cli → wpa_cli -p /var/run/wpa_supplicant → nmcli
+```
+
+**audio:**
+```
+ALSA:        /proc/asound (always, no tool)
+PipeWire:    pw-dump + wpctl
+WirePlumber: wpctl
+PulseAudio:  pactl
+JACK:        jack_lsp
+```
+
+**containers / VMs:**
+```
+podman  docker  qm (Proxmox VM)  pct (Proxmox LXC)
+QEMU/VirtualBox/VMware detected from /proc without any tools
+```
+
+**other:**
+```
+smartctl   — disk SMART health
+sensors    — extra hwmon fallback
+```
 
 ## license
 
