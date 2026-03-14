@@ -93,13 +93,22 @@ bash install
 
 ## theme
 
-`~/.config/bsc/theme.json` — xterm-256 color indices:
+`~/.config/bsc/theme.json` — accepts `#RRGGBB` hex or xterm-256 integers.
+Truecolor used automatically when terminal supports it (`COLORTERM=truecolor`):
 
 ```json
 {
-  "HDR": 208,  "CPU": 93,  "GPU": 82,
-  "RAM": 220,  "DISK": 82, "NET": 33,
-  "SEL": 226,  "USB": 245, "WARN": 196
+  "HDR":  "#ff8700",
+  "CPU":  "#8700ff",
+  "GPU":  "#00ff5f",
+  "RAM":  "#ffd700",
+  "ZRAM": "#af87ff",
+  "DISK": "#00ff5f",
+  "NET":  "#0087ff",
+  "SEL":  "#ffff00",
+  "USB":  "#8a8a8a",
+  "MARK": "#ff8700",
+  "WARN": "#ff0000"
 }
 ```
 
@@ -111,13 +120,31 @@ Run-length encoded: `futex(...) ×8492` shows how long a process sleeps.
 
 ## optional tools
 
+Everything is optional — bsc degrades gracefully when tools are missing.
+
 | tool | used for |
 |------|---------|
-| `bpftrace` | eBPF syscall trace per core |
-| `ndisasm` / `objdump` | disassembly in DEV |
-| `pactl` / `wpctl` / `pw-dump` | audio detail |
-| `nvidia-smi` | nvidia GPU stats |
-| `sensors` / hwmon | temps |
+| `bpftrace` | eBPF syscall trace per core (needs CAP_BPF/root) |
+| `ndisasm` | disassembly in DEV (preferred) |
+| `objdump` | disassembly in DEV (fallback) |
+| `nvidia-smi` | NVIDIA GPU: vram, util, temp, power, fan, clocks |
+| `rocm-smi` | AMD GPU stats |
+| `/sys/class/hwmon` | CPU/GPU temps, fans (no tool needed) |
+| `pw-dump` | PipeWire per-channel volumes, format, sample rate |
+| `wpctl` | WirePlumber volume control |
+| `pactl` | PulseAudio / pipewire-pulse: vol, mic, sinks, streams |
+| `jack_lsp` | JACK audio port count |
+| `iw` | WiFi SSID + signal strength |
+| `iwgetid` | WiFi SSID fallback |
+| `iwconfig` | WiFi SSID fallback |
+| `wpa_cli` | WiFi SSID fallback |
+| `nmcli` | WiFi SSID fallback |
+| `podman` | container list (all states) |
+| `docker` | container list (all states) |
+| `qm` | Proxmox VM list |
+| `pct` | Proxmox LXC list |
+| `smartctl` | disk SMART health |
+| `strace` | (unused — replaced by eBPF+/proc) |
 
 ## license
 
