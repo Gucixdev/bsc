@@ -41,7 +41,7 @@ python3 bsc
 - sysctl tunables (vm/net/kernel)
 - top IRQs with delta counts
 - CPU flags — full x86_64 set (~80 flags), present=green missing=dim
-- per-core syscall trace: eBPF or /proc fallback, run-length encoded, `←→` to switch core
+- syscall trace: 1-3 cores side by side (width≥150→3col, ≥80→2col), `←→` to shift window
 - registers (SP/PC) + disassembly at PC when process is in syscall
 
 ## HEX tab
