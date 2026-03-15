@@ -189,8 +189,8 @@ sensors    — extra hwmon fallback
 - kernel taints & unsigned modules — `/proc/sys/kernel/tainted` bitmask + `/proc/modules` col4
 - IPC / shared memory — `/proc/sysvipc/shm|sem|msg`; które PIDy są "sklejone"
 - dynamic linker monitor — `/proc/PID/maps` filtr .so; failed open = brakująca biblioteka
-- syscall copy shortcut — klawisz `c`; backend: OSC 52 → xclip → xsel → wl-copy (cascade)
-- io_uring trace — eBPF/bpftrace submissions obok syscall trace
+- syscall copy shortcut — klawisz `c`; backend: OSC 52 → xclip → xsel → wl-copy (cascade); OSC 52 działa przez SSH — kopiuje do lokalnego schowka na laptopie bez dodatkowych narzędzi
+- io_uring trace — eBPF przez surowy `bpf()` syscall (bez bcc/libbpf); ładowanie bajtkodu ręcznie; submissions obok syscall trace
 
 ### process detail panel (v)
 - open files — `/proc/PID/fd` readlink; typ: file/socket/pipe/anon_inode
@@ -202,7 +202,7 @@ sensors    — extra hwmon fallback
 ### nowa zakładka SEC
 - reverse shell hunter — shell parent (/bin/sh|python) + aktywne gniazdo TCP
 - suspicious raw sockets — AF_PACKET users z `/proc/net/packet`; ostrzeżenie jeśli != bsc
-- entropy monitor — delta entropii zapisu na dysk; spike = potencjalny ransomware
+- entropy monitor + auto-kill — delta entropii zapisu na dysk przez inotify+stat(); spike > próg → SIGKILL procesu bez pytania; próg konfigurowalny w `~/.config/bsc/bsc.conf`; darmowy anti-ransomware
 - SUID modified <24h — stat() na plikach z bitem SUID; alert przy świeżych
 - DNS sniffer — AF_PACKET port 53 UDP; parse query name; log 5 ostatnich per iface
 - bullshit level — klawisz `b`; lista z `~/.config/bsc/bullshit` (nazwa/glob per linia);
@@ -219,7 +219,7 @@ sensors    — extra hwmon fallback
 
 ### nowa zakładka LOG
 - log kollator — czytaj `/dev/kmsg` (dmesg) równolegle z innymi źródłami; jeden strumień, jeden widok
-- OOM killer alert — grep `kmsg` na "Out of memory: Killed"; wielki napis + PID + nazwa + rss w chwili śmierci
+- OOM killer alert — grep `kmsg` na "Out of memory: Killed"; **globalny overlay** widoczny z każdej zakładki (górna ramka, WARN_COLOR); PID + nazwa + RSS w chwili śmierci; klawisz `x` = dismiss
 - USB/hardware events — nowe wpisy `kmsg` z prefixem `usb`/`input`/`block`; pokazuj UUID+FS nowego urządzenia
 - log filter — klawisz `/`; regex w locie; WARN/ERR kolorowane WARN_COLOR
 
