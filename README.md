@@ -173,17 +173,56 @@ sensors    — extra hwmon fallback
 
 ## todo
 
-- Intel Arc GPU — xe driver, `/sys/class/hwmon/xe`, util%/temp/vram
-- Battery / UPS — `/sys/class/power_supply`, charge%, health, current draw
-- Filesystem column — df-style, `/proc/mounts` + `statvfs`, no new tools needed
+### OVW
+- process tree — PPID z `/proc/PID/status`; pstree-style, zero narzędzi
+- ghost trace — martwy proc zostaje szary 5s; łapie transient procs
+- zombie & D-state tracker — `/proc/PID/status` State=Z/D; licznik + lista
+- top talkers — `/proc/net/tcp` + udp inode→PID; kolumna NET w liście procesów
+- sparklines rx/tx — 30s ASCII historia (▁▂▃▄▅▆▇█) obok KB/s
+- promiscuous mode warning — `/sys/class/net/*/flags` bit IFF_PROMISC (0x100)
+- battery / UPS column — `/sys/class/power_supply`; charge%, health, current draw
+
+### DEV
+- MSR temp bezpośrednio — `/dev/cpu/N/msr` 0x19C (IA32_THERM_STATUS); bez sensors
+- microcode version — `/sys/devices/system/cpu/cpu0/microcode/version`; Spectre/Meltdown status
+- kernel taints & unsigned modules — `/proc/sys/kernel/tainted` bitmask + `/proc/modules` col4
+- IPC / shared memory — `/proc/sysvipc/shm|sem|msg`; które PIDy są "sklejone"
+- dynamic linker monitor — `/proc/PID/maps` filtr .so; failed open = brakująca biblioteka
+- syscall copy shortcut — klawisz `c`; backend: OSC 52 → xclip → xsel → wl-copy (cascade)
+- io_uring trace — eBPF/bpftrace submissions obok syscall trace
+
+### process detail panel (v)
+- open files — `/proc/PID/fd` readlink; typ: file/socket/pipe/anon_inode
+- connection map — `/proc/net/tcp{,6}` + udp; PROTO|LOCAL|REMOTE|STATE|SERVICE
+- VMA visualization — `/proc/PID/maps` ASCII bar [Stack][Heap][Libs][Text][Shr]; enter→HEX jump
+- capabilities decode — CapEff hex (już jest) → decode do nazw CAP_NET_ADMIN etc.
+- resource limits — `/proc/PID/limits` (ulimits)
+
+### nowa zakładka SEC
+- reverse shell hunter — shell parent (/bin/sh|python) + aktywne gniazdo TCP
+- suspicious raw sockets — AF_PACKET users z `/proc/net/packet`; ostrzeżenie jeśli != bsc
+- entropy monitor — delta entropii zapisu na dysk; spike = potencjalny ransomware
+- SUID modified <24h — stat() na plikach z bitem SUID; alert przy świeżych
+- DNS sniffer — AF_PACKET port 53 UDP; parse query name; log 5 ostatnich per iface
+- bullshit level — klawisz `b`; lista z `~/.config/bsc/bullshit` (nazwa/glob per linia);
+  wyświetla "BULLSHIT LEVEL [████░░░] 62%" + SIGTERM/SIGKILL z roota
+
+### OVW — PWR (bez nowej zakładki, do istniejącej kolumny CPU/RAM)
+- P-States / C-States — `/sys/devices/system/cpu/cpuN/cpuidle/stateN/`; które stany aktywne
+- thermal zones full map — `/sys/class/thermal/thermal_zone*/temp` + type; VRM, NVMe, mostki
+
+### hardware / events
+- USB/PCIe hotplug — poll `/sys/bus/usb/devices` + `/sys/bus/pci/devices`; nowe = highlight
+- system events watchdog — próg CPU/mem/disk per proc → auto-start recording lub zrzut pamięci
+
+### cross-tab / misc
+- Intel Arc GPU — `/sys/class/hwmon/xe`; util%/temp/vram
+- Filesystem column — `/proc/mounts` + `statvfs()`; df-style, zero narzędzi
 - CPU perf counters — IPC, cache-miss%, branch-miss% via `perf_event_open` syscall
-- NUMA topology — node/distance map from `/sys/devices/system/node`
-- cgroups v2 tree — hierarchy + per-cgroup CPU/mem limits inline
-- RSS timeline — track memory growth per-process over time (sparkline in detail panel)
-- USB device tree — `/sys/bus/usb/devices`, speed/class/product
-- io_uring trace — trace io_uring submissions via eBPF alongside syscall trace
-- Process resource limits — show ulimits in detail panel (`/proc/PID/limits`)
-- ARM / RISC-V support — replace x86-specific MSR/RAPL reads with arch-neutral fallbacks
+- NUMA topology — `/sys/devices/system/node`; node/distance map
+- cgroups v2 tree — hierarchy + per-cgroup CPU/mem limits
+- RSS timeline — historia wzrostu RSS per proc; sparkline w panelu detalu
+- ARM / RISC-V — arch-neutral fallback zamiast x86 MSR/RAPL
 
 ## platforms
 
