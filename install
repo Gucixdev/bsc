@@ -7,8 +7,8 @@ BIN="$PREFIX/bin"
 CFG="$HOME/.config/bsc"
 
 mkdir -p "$BIN" "$CFG"
+CGO_ENABLED=0 go build -ldflags='-s -w' -o bsc bsc.go
 cp bsc "$BIN/bsc"
-chmod +x "$BIN/bsc"
 
 if [ ! -f "$CFG/theme.json" ]; then
     cp theme.json "$CFG/theme.json"
