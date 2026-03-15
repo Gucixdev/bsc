@@ -181,6 +181,7 @@ sensors    — extra hwmon fallback
 - sparklines rx/tx — 30s ASCII historia (▁▂▃▄▅▆▇█) obok KB/s
 - promiscuous mode warning — `/sys/class/net/*/flags` bit IFF_PROMISC (0x100)
 - battery / UPS column — `/sys/class/power_supply`; charge%, health, current draw
+- CAP column — `/proc/PID/status` CapEff bitmask; kolumna w liście procesów; highlight jeśli CAP_SYS_ADMIN/CAP_NET_RAW/CAP_SYS_PTRACE
 
 ### DEV
 - MSR temp bezpośrednio — `/dev/cpu/N/msr` 0x19C (IA32_THERM_STATUS); bez sensors
@@ -210,6 +211,7 @@ sensors    — extra hwmon fallback
 ### OVW — PWR (bez nowej zakładki, do istniejącej kolumny CPU/RAM)
 - P-States / C-States — `/sys/devices/system/cpu/cpuN/cpuidle/stateN/`; które stany aktywne
 - thermal zones full map — `/sys/class/thermal/thermal_zone*/temp` + type; VRM, NVMe, mostki
+- PSI (Pressure Stall Information) — `/proc/pressure/{cpu,io,memory}`; `some` + `full` avg10/avg60; zastępuje load average jako miarę duszenia się systemu
 
 ### hardware / events
 - USB/PCIe hotplug — poll `/sys/bus/usb/devices` + `/sys/bus/pci/devices`; nowe = highlight
