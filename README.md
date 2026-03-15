@@ -1,9 +1,9 @@
 # bsc — bullshit control. basement control. better control.
 
-Single-file Python TUI. No deps beyond stdlib + curses.
+Single-file Go TUI. No external deps — stdlib only. Static binary, zero runtime deps.
 
 ```
-python3 bsc
+./bsc
 ```
 
 ## tabs
@@ -86,8 +86,7 @@ l        lock/unlock net autoscroll
 ## install
 
 ```bash
-bash install
-# → ~/.local/bin/bsc
+bash install           # builds bsc.go → bsc → ~/.local/bin/bsc
 # → ~/.config/bsc/theme.json
 ```
 
