@@ -171,6 +171,35 @@ smartctl   — disk SMART health
 sensors    — extra hwmon fallback
 ```
 
+## todo
+
+- Intel Arc GPU — xe driver, `/sys/class/hwmon/xe`, util%/temp/vram
+- Battery / UPS — `/sys/class/power_supply`, charge%, health, current draw
+- Filesystem column — df-style, `/proc/mounts` + `statvfs`, no new tools needed
+- CPU perf counters — IPC, cache-miss%, branch-miss% via `perf_event_open` syscall
+- NUMA topology — node/distance map from `/sys/devices/system/node`
+- cgroups v2 tree — hierarchy + per-cgroup CPU/mem limits inline
+- RSS timeline — track memory growth per-process over time (sparkline in detail panel)
+- USB device tree — `/sys/bus/usb/devices`, speed/class/product
+- io_uring trace — trace io_uring submissions via eBPF alongside syscall trace
+- Process resource limits — show ulimits in detail panel (`/proc/PID/limits`)
+- ARM / RISC-V support — replace x86-specific MSR/RAPL reads with arch-neutral fallbacks
+
+## platforms
+
+Tested on Linux x86_64. Everything reads from `/proc`, `/sys`, and standard Linux tools.
+
+### macOS / BSD
+The core display logic is portable — curses works fine.
+What needs porting: `/proc` → `sysctl()` calls, RAPL → `powermetrics`,
+disk stats → `IOKit`, network → `getifaddrs`.
+PRs welcome.
+
+### Windows
+WSL2 runs bsc as-is (Linux `/proc` available inside the VM).
+Native Windows would need a full data-collection rewrite (psutil or raw WinAPI).
+PRs welcome.
+
 ## license
 
 MIT

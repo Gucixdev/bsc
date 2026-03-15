@@ -80,6 +80,7 @@ _pubip_proc   = None
 _pubip_srv_idx = 0
 _conns_cache  = (0.0, {})
 _prev_dev     = {}
+_prev_ring_len = {}   # core_n → ring length at last draw, used for scroll anchoring
 
 
 # per-core syscall ring: core_n (int) -> deque of "pid:comm  syscall(args) [×N]"
@@ -146,6 +147,14 @@ def put(win, y, x, s, attr=0):
         if 0 <= y < mh and 0 <= x < mw:
             win.addstr(y, x, s[:mw-x], attr)
     except: pass
+
+def _refresh(w):
+    # synchronized update — terminal renders the full frame atomically (no tearing)
+    # terminals that don't support it silently ignore the unknown escape sequences
+    os.write(1, b'\033[?2026h')  # DEC private: begin synchronized update
+    w.noutrefresh()
+    curses.doupdate()            # all curses output lands on fd 1 here
+    os.write(1, b'\033[?2026l') # end synchronized update → terminal paints
 
 # ── CPU ────────────────────────────────────────────────────────────────────
 
@@ -2280,7 +2289,7 @@ def draw_main(stdscr, state):
         is_marked = p['pid'] in marked
         is_kern   = bool(KERN_RE.match(p.get('name','') or ''))
         is_zombie = p.get('tc','') == 'Z'
-        if is_sel:           attr = curses.color_pair(C_SEL) | curses.A_BOLD
+        if is_sel:           attr = curses.color_pair(C_CPU) | curses.A_BOLD
         elif is_marked:      attr = curses.color_pair(C_MARK)
         elif is_zombie:      attr = curses.color_pair(C_WARN) | curses.A_BOLD
         elif is_kern:        attr = curses.color_pair(C_USB) | curses.A_DIM
@@ -2298,12 +2307,12 @@ def draw_main(stdscr, state):
     if input_mode:
         put(stdscr, H-3, 0, f"[:cmd] {input_buf}_"[:W], curses.color_pair(C_SEL))
 
-    draw_legend(stdscr, H, W, [(C_CPU,'high'),(C_RAM,'med'),(C_DISK,'low'),(C_USB,'kern'),(C_WARN,'warn'),(C_NET,'NET')])
+    draw_legend(stdscr, H, W, [(C_WARN,'high'),(C_RAM,'med'),(C_DISK,'low'),(C_USB,'kern'),(C_CPU,'sel'),(C_NET,'NET')])
     proc_hints = "  ↑↓=sel  Enter/v=view  d=trace→DEV  Esc=close  ←→=flt  c=cpu  m=mem  k=kill  9=SIGKILL  /=search  y=copy"
     put(stdscr, H-2, min(W-1, 38), proc_hints[:max(0, W-38)], curses.color_pair(C_USB) | curses.A_DIM)
     draw_rec_indicator(stdscr, H, W, state)
     draw_statusbar(stdscr, state)
-    stdscr.refresh()
+    _refresh(stdscr)
 
 # ── TAB 1: DEV ────────────────────────────────────────────────────────────
 
@@ -2584,26 +2593,45 @@ def draw_dev(stdscr, state):
 
     # SYSCALL TRACE — multi-core columns, 10ms sampler / eBPF / perf
     _core_sampler_start()
-    core_n  = state.get('core_trace', 0)
-    global _core_watch
-    _core_watch = core_n
+    global _core_watch, _prev_ring_len
     n_cores = len(state.get('cpu', ([],))[0]) or 1
     if   _bpf_proc  and _bpf_proc.poll()  is None: backend_lbl = 'eBPF'
     elif _perf_proc and _perf_proc.poll() is None: backend_lbl = 'perf'
     else: backend_lbl = '/proc'
     # adaptive column count: 3 if wide, 2 if medium, 1 if narrow
+    # always fill n_cols fully — clamp core_n so core_n+n_cols-1 < n_cores
     n_cols  = 3 if W >= 150 else 2 if W >= 80 else 1
-    n_cols  = min(n_cols, n_cores - core_n)  # don't show cols past last core
-    n_cols  = max(1, n_cols)
+    n_cols  = min(n_cols, n_cores)
+    core_n  = min(state.get('core_trace', 0), max(0, n_cores - n_cols))
+    state['core_trace'] = core_n  # snap back if clamped
+    _core_watch = core_n
     col_w   = W // n_cols
+    avail_sc = max(0, H - row - 4)  # rows available for trace entries (minus header+hints)
+    # max_scroll: how far we can scroll without blank lines at bottom
+    max_scroll = max(0, max(
+        (len(_core_rings.get(core_n + c, collections.deque())) for c in range(n_cols)),
+        default=0) - avail_sc)
+    sc_scroll = min(state.get('dev_scroll', 0), max_scroll)
+    # anchor: if user has scrolled back, advance sc_scroll as new entries arrive
+    # so the currently visible entry stays in place (no jump on ctx switch)
+    if sc_scroll > 0:
+        for c in range(n_cols):
+            cn = core_n + c
+            cur_len = len(_core_rings.get(cn, collections.deque()))
+            delta = cur_len - _prev_ring_len.get(cn, cur_len)
+            if delta > 0:
+                sc_scroll = min(sc_scroll + delta, max_scroll)
+    state['dev_scroll'] = sc_scroll
+    # update prev lengths for next frame
+    for c in range(n_cols):
+        cn = core_n + c
+        _prev_ring_len[cn] = len(_core_rings.get(cn, collections.deque()))
     if row < H - 5:
         cores_s = '-'.join(str(core_n + c) for c in range(n_cols))
         put(stdscr, row, 0,
             (f"─── SYSCALL TRACE [cores {cores_s}/{n_cores-1}] [{backend_lbl}] [←→=shift ↑↓=scroll] " + "─"*(W-20))[:W],
             curses.color_pair(C_HDR))
         row += 1
-    sc_scroll = state.get('dev_scroll', 0)
-    avail_sc  = max(0, H - row - 2)
     # draw column headers
     if row < H - 3:
         for c in range(n_cols):
@@ -2611,8 +2639,8 @@ def draw_dev(stdscr, state):
             r  = _core_rings.get(cn, collections.deque())
             put(stdscr, row, c * col_w, f" core {cn} [{len(r)}]"[:col_w], curses.color_pair(C_HDR) | curses.A_BOLD)
         row += 1
-    # draw entries side by side
-    for ri in range(avail_sc - 1):
+    # draw entries side by side — newest first (reversed), sc_scroll offsets from newest
+    for ri in range(avail_sc):
         r = row + ri
         if r >= H - 2: break
         for c in range(n_cols):
@@ -2635,7 +2663,7 @@ def draw_dev(stdscr, state):
     put(stdscr, H-2, 0, hint[:W], curses.color_pair(C_DISK))
     draw_rec_indicator(stdscr, H, W, state)
     draw_statusbar(stdscr, state)
-    stdscr.refresh()
+    _refresh(stdscr)
 
 # ── TAB 4: GRAPH — area chart, adaptive Y scale ────────────────────────────
 # Area fill from bottom up. Metrics drawn lowest→highest priority (CPU on top).
@@ -2931,7 +2959,7 @@ def draw_hex(stdscr, state):
 
     draw_rec_indicator(stdscr, H, W, state)
     draw_statusbar(stdscr, state)
-    stdscr.refresh()
+    _refresh(stdscr)
 
 # ── collect ────────────────────────────────────────────────────────────────
 
@@ -3081,7 +3109,7 @@ def handle_pid_input(stdscr, state):
                 put(stdscr, ry, 0, ' ' * min(W, 32), 0)
         put(stdscr, oy + 1 + list_h, 0,
             f" {len(flt)} / {len(procs)} procs"[:W], curses.color_pair(C_USB))
-        stdscr.refresh()
+        _refresh(stdscr)
 
         key = stdscr.getch()
         if key == 27:   break
@@ -3149,6 +3177,7 @@ def main(stdscr):
         'net_lock':       True,         # net source: True=tail auto-scroll, False=manual
     }
     last_collect = 0.0
+    last_draw    = 0.0
     dirty        = True
 
     while True:
@@ -3163,11 +3192,15 @@ def main(stdscr):
                 record_snapshot(state, state['rec']['f'])
 
         tab = state['tab']
-        if dirty:
+        # cap redraws at 30fps to avoid tearing from held scroll keys
+        # (data still collects at interval_ms, but display doesn't thrash)
+        min_draw_dt = 0.033
+        if dirty and now - last_draw >= min_draw_dt:
             if   tab == 0: draw_main(stdscr, state)
             elif tab == 1: draw_dev(stdscr, state)
             elif tab == 2: draw_hex(stdscr, state)
             dirty = False
+            last_draw = now
 
         stdscr.timeout(16 if tab == 2 else 33 if tab == 1 else 100)
         key   = stdscr.getch()
@@ -3247,12 +3280,14 @@ def main(stdscr):
         elif tab == 0:  # OVW+PRC
             top_h_k = max(10, min(H // 2, 22))
             avail = max(1, H - (top_h_k + 2) - 3)
-            if key == curses.KEY_DOWN:
-                state['sel'] = min(state['sel']+1, max(0, len(procs)-1))
+            if key in (curses.KEY_DOWN, ord('J'), curses.KEY_SF):
+                step = 1 if key == curses.KEY_DOWN else 5
+                state['sel'] = min(state['sel']+step, max(0, len(procs)-1))
                 if state['sel'] >= state['scroll'] + avail:
                     state['scroll'] = state['sel'] - avail + 1
-            elif key == curses.KEY_UP:
-                state['sel'] = max(state['sel']-1, 0)
+            elif key in (curses.KEY_UP, ord('K'), curses.KEY_SR):
+                step = 1 if key == curses.KEY_UP else 5
+                state['sel'] = max(state['sel']-step, 0)
                 if state['sel'] < state['scroll']:
                     state['scroll'] = state['sel']
             elif key == curses.KEY_LEFT:
@@ -3309,10 +3344,12 @@ def main(stdscr):
             elif key in (curses.KEY_RIGHT, ord('l')):
                 state['core_trace'] = min(n_cores - 1, state.get('core_trace', 0) + 1)
                 state['dev_scroll'] = 0
-            elif key in (ord('i'), curses.KEY_UP):
-                state['dev_scroll'] = max(0, state.get('dev_scroll', 0) - 1)
-            elif key in (ord('o'), curses.KEY_DOWN):
-                state['dev_scroll'] = state.get('dev_scroll', 0) + 1
+            elif key in (ord('i'), curses.KEY_UP, ord('K'), curses.KEY_SR):
+                step = 1 if key in (ord('i'), curses.KEY_UP) else 5
+                state['dev_scroll'] = max(0, state.get('dev_scroll', 0) - step)
+            elif key in (ord('o'), curses.KEY_DOWN, ord('J'), curses.KEY_SF):
+                step = 1 if key in (ord('o'), curses.KEY_DOWN) else 5
+                state['dev_scroll'] = state.get('dev_scroll', 0) + step
 
         elif tab == 2:  # HEX
             src = state.get('hex_source', 'proc')
@@ -3340,12 +3377,12 @@ def main(stdscr):
                 state['hex_search'] = ''; state['hex_search_mode'] = True; curses.curs_set(1)
             elif key == ord('l') and src == 'net':
                 state['net_lock'] = not state.get('net_lock', True)
-            elif key == curses.KEY_DOWN:
+            elif key in (curses.KEY_DOWN, ord('J'), curses.KEY_SF):
                 if src == 'net': state['net_lock'] = False
-                state['hex_scroll'] += 1
-            elif key == curses.KEY_UP:
+                state['hex_scroll'] += 1 if key == curses.KEY_DOWN else 5
+            elif key in (curses.KEY_UP, ord('K'), curses.KEY_SR):
                 if src == 'net': state['net_lock'] = False
-                state['hex_scroll'] = max(0, state['hex_scroll'] - 1)
+                state['hex_scroll'] = max(0, state['hex_scroll'] - (1 if key == curses.KEY_UP else 5))
             elif key == curses.KEY_NPAGE:
                 if src == 'net': state['net_lock'] = False
                 state['hex_scroll'] += H - 4
