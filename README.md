@@ -215,6 +215,27 @@ sensors    — extra hwmon fallback
 - USB/PCIe hotplug — poll `/sys/bus/usb/devices` + `/sys/bus/pci/devices`; nowe = highlight
 - system events watchdog — próg CPU/mem/disk per proc → auto-start recording lub zrzut pamięci
 
+### nowa zakładka LOG
+- log kollator — czytaj `/dev/kmsg` (dmesg) równolegle z innymi źródłami; jeden strumień, jeden widok
+- OOM killer alert — grep `kmsg` na "Out of memory: Killed"; wielki napis + PID + nazwa + rss w chwili śmierci
+- USB/hardware events — nowe wpisy `kmsg` z prefixem `usb`/`input`/`block`; pokazuj UUID+FS nowego urządzenia
+- log filter — klawisz `/`; regex w locie; WARN/ERR kolorowane WARN_COLOR
+
+### nowa zakładka IO
+- inotify file snooper — `inotify_init` + `inotify_add_watch /`; kolumny: PID | PROC | PATH | OP (WRITE/DELETE/RENAME)
+  → detekcja śmieciarek w /tmp i procesów szpiegujących pliki użytkownika; bez inotifywait, czyste syscalle
+- disk saturation map — `/proc/diskstats` util% per urządzenie; ASCII bar + await ms
+- writeback stall monitor — `/proc/vmstat` pgwriteback; skok = aplikacje blokują się na flush
+
+### graceful degradation (root vs user)
+```
+root                    → eBPF traces, /dev/kmsg, MSR, raw sockets, inotify /, SEC tab
+CAP_NET_RAW             → DNS sniffer, packet capture
+CAP_SYS_PTRACE          → open files per PID (/proc/PID/fd)
+brak uprawnień (user)   → /proc stats, temp, /sys, OVW/DEV/NET readonly
+```
+bsc pokazuje aktywne możliwości przy starcie (1 linia statusu); nie crashuje — degraduje się cicho.
+
 ### cross-tab / misc
 - Intel Arc GPU — `/sys/class/hwmon/xe`; util%/temp/vram
 - Filesystem column — `/proc/mounts` + `statvfs()`; df-style, zero narzędzi
