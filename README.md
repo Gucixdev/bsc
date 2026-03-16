@@ -191,4 +191,4 @@ PRs welcome.
 
 ## license
 
-ACSL v1.4 — Anti-Capitalist Software License
+MIT
