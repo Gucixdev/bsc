@@ -90,9 +90,12 @@ l        lock/unlock net autoscroll
 ## install
 
 ```bash
-bash install           # builds bsc.go → bsc → ~/.local/bin/bsc
-# → ~/.config/bsc/theme.json
+bash scripts/bsc-cmd build go
+bash scripts/bsc-cmd install go -y
 ```
+
+Builds static binary → `~/.local/bin/bsc`, copies theme → `~/.config/bsc/theme.json`.
+After first install `bsc-cmd` is also available in PATH.
 
 ## theme
 
