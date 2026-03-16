@@ -46,7 +46,7 @@ Single-file Go TUI. No external deps — stdlib only. Static binary, zero runtim
 
 ## HEX tab
 
-Three sources switchable with `m` / `d` / `n`:
+Three sources switchable with `w` (cycles MEM→DISK→NET):
 
 | source | what |
 |--------|------|
@@ -67,18 +67,22 @@ OVW
 ↑↓       select process
 ←→       filter mode
 Enter/v  process detail panel
-d        jump to DEV
-k/9      SIGTERM / SIGKILL
+d        jump to DEV tab
+k / 9    SIGKILL
+y / Y    yank PID / cmd
+Space    mark process
+f        freeze sort order
+c / m    sort by cpu / mem
 /        search
-i/o      scroll net column
 
 DEV
-←→  h/l  switch cpu core
-↑↓  i/o  scroll
+←→       shift core window
+↑↓       scroll
 
 HEX
-m/d/n    source: mem / disk / net
+w        cycle source: mem → disk → net
 ↑↓       scroll
+←→       select region / disk / iface
 l        lock/unlock net autoscroll
 /        search bytes
 ```
@@ -227,6 +231,11 @@ sensors    — extra hwmon fallback
   → detekcja śmieciarek w /tmp i procesów szpiegujących pliki użytkownika; bez inotifywait, czyste syscalle
 - disk saturation map — `/proc/diskstats` util% per urządzenie; ASCII bar + await ms
 - writeback stall monitor — `/proc/vmstat` pgwriteback; skok = aplikacje blokują się na flush
+
+
+### w hexdump dodac w ram/disk/net w tym panelu gdzie sie porusza strzalkami lewo prawo po stronach ma byc drzewo a nie lista i ma tez pokazywac hexdump dokladnie vramu zramu swapu tez i no wiesz o co chodzi xD
+
+
 
 ### graceful degradation (root vs user)
 ```
