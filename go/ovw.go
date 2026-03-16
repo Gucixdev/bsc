@@ -14,6 +14,10 @@ var procPos = map[int]float64{}
 // ghostFade — frames since ghost was born (30→0); drives color transition live→blue
 var ghostFade = map[int]int{}
 
+// stickyColW — max observed width per column slot; only grows, resets on terminal resize
+var stickyColW [8]int
+var stickyTermCols int
+
 // ── DRAW HELPERS ─────────────────────────────────────────────────────────────
 
 func fmtMem(kb int) string {
@@ -95,9 +99,41 @@ func renderCols(buf *strings.Builder, startRow, nRows int, cols [][]ColLine, wid
 	}
 }
 
+// ── SPARKLINE ─────────────────────────────────────────────────────────────────
+
+const sparkChars = "▁▂▃▄▅▆▇█"
+
+func sparkline(vals []float64) string {
+	if len(vals) == 0 {
+		return ""
+	}
+	if len(vals) > 16 {
+		vals = vals[len(vals)-16:]
+	}
+	max := 0.0
+	for _, v := range vals {
+		if v > max {
+			max = v
+		}
+	}
+	runes := []rune(sparkChars) // 8 chars, index 0–7
+	var b strings.Builder
+	for _, v := range vals {
+		idx := 0
+		if max > 0 {
+			idx = int(v/max*7.0 + 0.5)
+		}
+		if idx > 7 {
+			idx = 7
+		}
+		b.WriteRune(runes[idx])
+	}
+	return b.String()
+}
+
 // ── COLUMN BUILDERS ──────────────────────────────────────────────────────────
 
-func colCPU(cores []CoreStat, load [3]float64, raplW float64, h int, t *Theme) []ColLine {
+func colCPU(cores []CoreStat, load [3]float64, raplW float64, histCPU []float64, histCores [][]float64, h int, t *Theme) []ColLine {
 	var lines []ColLine
 	add := func(text string, c Color, dim, bold bool) {
 		addLine(&lines, h, text, c, dim, bold)
@@ -118,6 +154,7 @@ func colCPU(cores []CoreStat, load [3]float64, raplW float64, h int, t *Theme) [
 
 	cpuC := pctColor(avgPct, t)
 	add(fmt.Sprintf("CPU %3.0f%%  ld:%.1f/%.1f/%.1f", avgPct, load[0], load[1], load[2]), cpuC, false, false)
+	add(sparkline(histCPU), cpuC, true, false)
 	add(fmt.Sprintf("  %.0fW  %s", raplW, gov), cpuC, false, false)
 
 	for i, c := range cores {
@@ -129,7 +166,15 @@ func colCPU(cores []CoreStat, load [3]float64, raplW float64, h int, t *Theme) [
 		if c.TempC > 0 {
 			tempS = fmt.Sprintf("%d°", c.TempC)
 		}
-		add(fmt.Sprintf("%2d %3.0f%% | %s | %s", i, c.Pct, freqS, tempS), pctColor(c.Pct, t), false, false)
+		spark := ""
+		if i < len(histCores) && len(histCores[i]) > 0 {
+			h5 := histCores[i]
+			if len(h5) > 5 {
+				h5 = h5[len(h5)-5:]
+			}
+			spark = " " + sparkline(h5)
+		}
+		add(fmt.Sprintf("%2d %3.0f%% | %s | %s", i, c.Pct, freqS, tempS)+spark, pctColor(c.Pct, t), false, false)
 	}
 
 	if len(cores) > 0 {
@@ -148,7 +193,7 @@ func colCPU(cores []CoreStat, load [3]float64, raplW float64, h int, t *Theme) [
 	return lines
 }
 
-func colRAMGPU(mem MemStat, gpu GPUStat, h int, t *Theme) []ColLine {
+func colRAMGPU(mem MemStat, gpu GPUStat, histGPU, histVRAM []float64, h int, t *Theme) []ColLine {
 	var lines []ColLine
 	add := func(text string, c Color, dim, bold bool) {
 		addLine(&lines, h, text, c, dim, bold)
@@ -180,12 +225,14 @@ func colRAMGPU(mem MemStat, gpu GPUStat, h int, t *Theme) []ColLine {
 		}
 		add(fmt.Sprintf("util:%3d%% %2dC %.0fW%s", gpu.Util, gpu.TempC, gpu.Power, fanS),
 			t.GPU, false, false)
+		add(sparkline(histGPU), t.GPU, true, false)
 		if gpu.VRAMTot > 0 {
 			vu := int(gpu.VRAMUsed >> 20)
 			vt := int(gpu.VRAMTot >> 20)
 			p := pct2(vu, vt)
 			add(fmt.Sprintf("VRAM %s/%s %d%%", fmtMem(vu*1024), fmtMem(vt*1024), p),
 				pctColor(float64(p), t), false, false)
+			add(sparkline(histVRAM), pctColor(float64(p), t), true, false)
 		}
 		if gpu.Driver != "" {
 			add("drv:"+gpu.Driver, t.GPU, true, false)
@@ -208,6 +255,7 @@ func colRAMGPU(mem MemStat, gpu GPUStat, h int, t *Theme) []ColLine {
 		}
 		if parts != "" {
 			add(strings.TrimSpace(parts), t.GPU, false, false)
+			add(sparkline(histGPU), t.GPU, true, false)
 		}
 		if gpu.VRAMTot > 0 {
 			vu := int(gpu.VRAMUsed >> 20)
@@ -215,6 +263,7 @@ func colRAMGPU(mem MemStat, gpu GPUStat, h int, t *Theme) []ColLine {
 			p := pct2(vu, vt)
 			add(fmt.Sprintf("VRAM %s/%s %d%%", fmtMem(vu*1024), fmtMem(vt*1024), p),
 				pctColor(float64(p), t), false, false)
+			add(sparkline(histVRAM), pctColor(float64(p), t), true, false)
 		}
 		if gpu.Driver != "" {
 			add("drv:"+gpu.Driver, t.GPU, true, false)
@@ -254,11 +303,13 @@ func fmtBytes(b int64) string {
 	}
 }
 
-func colDisk(disks []DiskStat, h int, t *Theme) []ColLine {
+func colDisk(disks []DiskStat, histDiskR, histDiskW map[string][]float64, h int, t *Theme) []ColLine {
 	var lines []ColLine
 	add := func(text string, c Color, dim, bold bool) {
 		addLine(&lines, h, text, c, dim, bold)
 	}
+	add("", t.DISK, true, false)
+	add("", t.DISK, true, false)
 	for di, d := range disks {
 		kind := "???"
 		if d.Rotary {
@@ -294,6 +345,7 @@ func colDisk(disks []DiskStat, h int, t *Theme) []ColLine {
 		add(fmt.Sprintf("  i%s/s o%s/s  busy:%.0f%%  %s",
 			fmtBps(d.ReadBps), fmtBps(d.WriteBps), d.Busy, tempS),
 			t.DISK, idle, false)
+		add(sparkline(histDiskR[d.Dev])+" "+sparkline(histDiskW[d.Dev]), t.DISK, true, false)
 		add(fmt.Sprintf("  R:%.0f W:%.0f iops  Rl:%.1f Wl:%.1fms",
 			d.RdIOPS, d.WrIOPS, d.RdLatMs, d.WrLatMs),
 			t.DISK, idle, false)
@@ -366,7 +418,7 @@ func connCounts() (tcp, udp, unix int) {
 	return
 }
 
-func colNet(nets []NetIface, gateway string, h int, t *Theme) []ColLine {
+func colNet(nets []NetIface, gateway string, histNetRx, histNetTx map[string][]float64, h int, t *Theme) []ColLine {
 	var lines []ColLine
 	add := func(text string, c Color, dim, bold bool) {
 		addLine(&lines, h, text, c, dim, bold)
@@ -453,6 +505,7 @@ func colNet(nets []NetIface, gateway string, h int, t *Theme) []ColLine {
 		if n.Up {
 			add(fmt.Sprintf("  tx%5s/s  rx%5s/s", fmtBps(n.TxBps), fmtBps(n.RxBps)),
 				t.DISK, false, false)
+			add(sparkline(histNetTx[n.Name])+" "+sparkline(histNetRx[n.Name]), t.DISK, true, false)
 		}
 		if n.MAC != "" {
 			add("  mac:"+n.MAC, t.DISK, true, false)
@@ -481,7 +534,7 @@ func colNet(nets []NetIface, gateway string, h int, t *Theme) []ColLine {
 	return lines
 }
 
-func colAudioUSB(audio []AudioServer, usb []string, removable []DiskStat, h int, t *Theme) []ColLine {
+func colAudioUSB(audio []AudioServer, usb []string, removable []DiskStat, histDiskR, histDiskW map[string][]float64, h int, t *Theme) []ColLine {
 	var lines []ColLine
 	add := func(text string, c Color, dim, bold bool) {
 		addLine(&lines, h, text, c, dim, bold)
@@ -510,11 +563,12 @@ func colAudioUSB(audio []AudioServer, usb []string, removable []DiskStat, h int,
 		add(fmt.Sprintf("%s %s %s %s", kind, d.Dev, sz, d.Model), t.DISK, false, false)
 		add(fmt.Sprintf("  %5s/s o %5s/s busy:%d%%",
 			fmtBps(d.ReadBps), fmtBps(d.WriteBps), int(d.Busy)), t.DISK, true, false)
+		add(sparkline(histDiskR[d.Dev])+" "+sparkline(histDiskW[d.Dev]), t.DISK, true, false)
 	}
 	return lines
 }
 
-func colVMs(vms VMStat, h int, t *Theme) []ColLine {
+func colVMs(vms VMStat, histVMsRun, histQEMURun, histVBoxRun, histVMwRun, histDockRun, histPodRun []float64, h int, t *Theme) []ColLine {
 	var lines []ColLine
 	add := func(text string, c Color, dim, bold bool) {
 		addLine(&lines, h, text, c, dim, bold)
@@ -536,7 +590,6 @@ func colVMs(vms VMStat, h int, t *Theme) []ColLine {
 	} else {
 		add("KVM: "+kvmS, t.WARN, false, false)
 	}
-
 	stClr := map[string]Color{
 		"run": t.DISK, "running": t.DISK,
 		"pause": t.RAM, "stop": t.DISK, "stopped": t.DISK, "new": t.NET,
@@ -547,13 +600,14 @@ func colVMs(vms VMStat, h int, t *Theme) []ColLine {
 		items   []VMInfo
 		inst    bool
 		showRss bool
+		hist    []float64
 	}
 	sections := []vmSection{
-		{"QEMU", vms.QEMUVMs, vms.QEMUInst, true},
-		{"VirtualBox", vms.VBoxVMs, vms.VBoxInst, false},
-		{"VMware", vms.VMwareVMs, vms.VMwareInst, false},
-		{"Docker", vms.DockerVMs, vms.DockerInst, false},
-		{"Podman", vms.PodmanVMs, vms.PodmanInst, false},
+		{"QEMU",       vms.QEMUVMs,   vms.QEMUInst,   true,  histQEMURun},
+		{"VirtualBox", vms.VBoxVMs,   vms.VBoxInst,   false, histVBoxRun},
+		{"VMware",     vms.VMwareVMs, vms.VMwareInst, false, histVMwRun},
+		{"Docker",     vms.DockerVMs, vms.DockerInst, false, histDockRun},
+		{"Podman",     vms.PodmanVMs, vms.PodmanInst, false, histPodRun},
 	}
 	for _, sec := range sections {
 		if len(lines) >= h {
@@ -561,9 +615,9 @@ func colVMs(vms VMStat, h int, t *Theme) []ColLine {
 		}
 		if len(sec.items) == 0 {
 			if sec.inst {
-				add(sec.label+": 0", t.DISK, true, false) // installed, none running → dim green
+				add(sec.label+": 0  "+sparkline(sec.hist), t.DISK, true, false)
 			} else {
-				add(sec.label+" N/A", t.WARN, false, false) // not installed → red
+				add(sec.label+" N/A", t.WARN, false, false)
 			}
 			continue
 		}
@@ -573,7 +627,7 @@ func colVMs(vms VMStat, h int, t *Theme) []ColLine {
 				runN++
 			}
 		}
-		add(fmt.Sprintf("%s: %d/%d", sec.label, runN, len(sec.items)), t.DISK, false, false)
+		add(fmt.Sprintf("%s: %d/%d  %s", sec.label, runN, len(sec.items), sparkline(sec.hist)), t.DISK, false, false)
 		for i, vm := range sec.items {
 			if len(lines) >= h {
 				break
@@ -654,10 +708,12 @@ func colVMs(vms VMStat, h int, t *Theme) []ColLine {
 	return lines
 }
 
-func colCPURAMGPU(cores []CoreStat, load [3]float64, raplW float64, mem MemStat, gpu GPUStat, h int, t *Theme) []ColLine {
-	cpu := colCPU(cores, load, raplW, h, t)
-	ram := colRAMGPU(mem, gpu, h-len(cpu), t)
-	return append(cpu, ram...)
+func colCPURAMGPU(cores []CoreStat, load [3]float64, raplW float64, mem MemStat, gpu GPUStat, histCPU, histGPU, histVRAM []float64, histCores [][]float64, h int, t *Theme) []ColLine {
+	cpu := colCPU(cores, load, raplW, histCPU, histCores, h, t)
+	// 2 blank separator rows between CPU block and RAM/GPU block
+	sep := []ColLine{{}, {}}
+	ram := colRAMGPU(mem, gpu, histGPU, histVRAM, h-len(cpu)-len(sep), t)
+	return append(append(cpu, sep...), ram...)
 }
 
 func colHooks(hooks []string, h int, t *Theme) []ColLine {
@@ -701,6 +757,11 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 	mem MemStat, gpu GPUStat, disks []DiskStat, nets []NetIface, gateway string,
 	audio []AudioServer, usb []string, vms VMStat,
 	allProcs []ProcStat, cnts map[string]int,
+	histCPU, histGPU, histVRAM []float64,
+	histNetRx, histNetTx map[string][]float64,
+	histDiskR, histDiskW map[string][]float64,
+	histVMsRun, histQEMURun, histVBoxRun, histVMwRun, histDockRun, histPodRun []float64,
+	histCores [][]float64,
 	ui *UI, t *Theme, ss *SysState) {
 
 	topH := rows / 2
@@ -719,12 +780,12 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 		minW int
 	}
 	all := []section{
-		{"cpurg",  colCPURAMGPU(cores, load, raplW, mem, gpu, topH, t), 28},
-		{"disk",   colDisk(disks, topH, t),                              32},
-		{"net",    colNet(nets, gateway, topH, t),                       44},
-		{"audusb", colAudioUSB(audio, usb, ss.Removable, topH, t),        28},
-		{"vms",    colVMs(vms, topH, t),                                 22},
-		{"hooks",  colHooks(ss.Hooks, topH, t),                          18},
+		{"cpurg",  colCPURAMGPU(cores, load, raplW, mem, gpu, histCPU, histGPU, histVRAM, histCores, topH, t), 28},
+		{"disk",   colDisk(disks, histDiskR, histDiskW, topH, t),                                              32},
+		{"net",    colNet(nets, gateway, histNetRx, histNetTx, topH, t),                                       44},
+		{"audusb", colAudioUSB(audio, usb, ss.Removable, histDiskR, histDiskW, topH, t),                      28},
+		{"vms",    colVMs(vms, histVMsRun, histQEMURun, histVBoxRun, histVMwRun, histDockRun, histPodRun, topH, t), 22},
+		{"hooks",  colHooks(ss.Hooks, topH, t),                                                                18},
 	}
 	minTotal := 0
 	for _, s := range all {
@@ -747,8 +808,15 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 
 	n := len(chosen)
 
-	// natural width = longest line in column + 1 (separator gap)
+	// reset sticky widths on terminal resize
+	if cols != stickyTermCols {
+		stickyColW = [8]int{}
+		stickyTermCols = cols
+	}
+
+	// compute natural widths from content, grow sticky cache, never shrink
 	colWidths := make([]int, n)
+	total := 0
 	for i, s := range chosen {
 		w := s.minW
 		for _, line := range s.data {
@@ -756,38 +824,24 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 				w = lw
 			}
 		}
-		colWidths[i] = w
-	}
-	// trim excess from least-important columns first
-	total := 0
-	for _, w := range colWidths {
-		total += w
-	}
-	for _, trimName := range []string{"hooks", "vms", "audusb", "net", "disk"} {
-		if total <= cols {
-			break
+		if w > stickyColW[i] {
+			stickyColW[i] = w
 		}
-		for i, s := range chosen {
-			if s.name == trimName && total > cols {
-				newW := colWidths[i] - (total - cols)
-				if newW < s.minW {
-					newW = s.minW
+		colWidths[i] = stickyColW[i]
+		total += colWidths[i]
+	}
+	// distribute any remaining terminal space into the widest elastic column
+	if remainder := cols - total; remainder > 0 {
+		for _, expandName := range []string{"hooks", "net", "disk"} {
+			for i, s := range chosen {
+				if s.name == expandName {
+					colWidths[i] += remainder
+					remainder = 0
+					break
 				}
-				total -= colWidths[i] - newW
-				colWidths[i] = newW
 			}
-		}
-	}
-	// expand remainder into hooks → net → disk
-	remainder := cols - total
-	for _, expandName := range []string{"hooks", "net", "disk"} {
-		if remainder <= 0 {
-			break
-		}
-		for i, s := range chosen {
-			if s.name == expandName && remainder > 0 {
-				colWidths[i] += remainder
-				remainder = 0
+			if remainder == 0 {
+				break
 			}
 		}
 	}

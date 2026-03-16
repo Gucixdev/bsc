@@ -17,12 +17,21 @@ import (
 var collectIntervalNs atomic.Int64
 
 var (
-	lastAudioT time.Time
-	lastVMT    time.Time
-	lastHookT  time.Time
-	prevPIDs   map[int]ProcStat  // for ghost detection; updated each collect
-	cpuSmooth  map[int]float64   // EMA of CPU per PID; α=0.5 per tick
+	lastAudioT      time.Time
+	lastVMT         time.Time
+	lastHookT       time.Time
+	prevPIDs        map[int]ProcStat // for ghost detection; updated each collect
+	cpuSmooth       map[int]float64  // EMA of CPU per PID; α=0.5 per tick
+	prevCtxSwCollect int64           // for ctx switch rate in collectAll
 )
+
+func appendHist(h []float64, v float64) []float64 {
+	h = append(h, v)
+	if len(h) > histLen {
+		h = h[len(h)-histLen:]
+	}
+	return h
+}
 
 func collectAll(ss *SysState) {
 	cores, load, raplW := readCPU()
@@ -132,6 +141,86 @@ func collectAll(ss *SysState) {
 	if hooks != nil {
 		ss.Hooks = hooks
 	}
+
+	// push history ring buffers
+	avgCPU := 0.0
+	for _, c := range cores {
+		avgCPU += c.Pct
+	}
+	if len(cores) > 0 {
+		avgCPU /= float64(len(cores))
+	}
+	ss.HistCPU = appendHist(ss.HistCPU, avgCPU)
+
+	vramPct := 0.0
+	if gpu.VRAMTot > 0 {
+		vramPct = 100.0 * float64(gpu.VRAMUsed) / float64(gpu.VRAMTot)
+	}
+	ss.HistVRAM = appendHist(ss.HistVRAM, vramPct)
+	ss.HistGPU = appendHist(ss.HistGPU, float64(gpu.Util))
+
+	// per-core history — reallocate if core count changed
+	if len(ss.HistCores) != len(cores) {
+		ss.HistCores = make([][]float64, len(cores))
+	}
+	for i, c := range cores {
+		ss.HistCores[i] = appendHist(ss.HistCores[i], c.Pct)
+	}
+
+
+	if ss.HistNetRx == nil {
+		ss.HistNetRx = map[string][]float64{}
+	}
+	if ss.HistNetTx == nil {
+		ss.HistNetTx = map[string][]float64{}
+	}
+	for _, n := range nets {
+		ss.HistNetRx[n.Name] = appendHist(ss.HistNetRx[n.Name], n.RxBps)
+		ss.HistNetTx[n.Name] = appendHist(ss.HistNetTx[n.Name], n.TxBps)
+	}
+
+	if ss.HistDiskR == nil {
+		ss.HistDiskR = map[string][]float64{}
+	}
+	if ss.HistDiskW == nil {
+		ss.HistDiskW = map[string][]float64{}
+	}
+	for _, d := range disks {
+		ss.HistDiskR[d.Dev] = appendHist(ss.HistDiskR[d.Dev], d.ReadBps)
+		ss.HistDiskW[d.Dev] = appendHist(ss.HistDiskW[d.Dev], d.WriteBps)
+	}
+
+	// ctx switch rate
+	ctxSwTotal := readCtxSwTotal()
+	ctxSwRate := ctxSwTotal - prevCtxSwCollect
+	if ctxSwRate < 0 {
+		ctxSwRate = 0
+	}
+	prevCtxSwCollect = ctxSwTotal
+	ss.HistCtxSw = appendHist(ss.HistCtxSw, float64(ctxSwRate))
+
+	// running VMs per type (ss.VMs may be from last TTL cycle — fine)
+	countRun := func(vms []VMInfo) float64 {
+		n := 0
+		for _, v := range vms {
+			if v.Status == "run" || v.Status == "running" {
+				n++
+			}
+		}
+		return float64(n)
+	}
+	qr := countRun(ss.VMs.QEMUVMs)
+	vbr := countRun(ss.VMs.VBoxVMs)
+	vwr := countRun(ss.VMs.VMwareVMs)
+	dr := countRun(ss.VMs.DockerVMs)
+	pr := countRun(ss.VMs.PodmanVMs)
+	ss.HistQEMURun = appendHist(ss.HistQEMURun, qr)
+	ss.HistVBoxRun = appendHist(ss.HistVBoxRun, vbr)
+	ss.HistVMwRun  = appendHist(ss.HistVMwRun, vwr)
+	ss.HistDockRun = appendHist(ss.HistDockRun, dr)
+	ss.HistPodRun  = appendHist(ss.HistPodRun, pr)
+	ss.HistVMsRun  = appendHist(ss.HistVMsRun, qr+vbr+vwr+dr+pr)
+
 	ss.mu.Unlock()
 }
 
@@ -155,6 +244,23 @@ func render(ss *SysState, ui *UI, t *Theme) {
 	procs := make([]ProcStat, len(ss.Procs))
 	copy(procs, ss.Procs)
 	cnts := ss.ProcCnts
+	histCPU  := append([]float64(nil), ss.HistCPU...)
+	histGPU  := append([]float64(nil), ss.HistGPU...)
+	histVRAM := append([]float64(nil), ss.HistVRAM...)
+	histNetRx := ss.HistNetRx
+	histNetTx := ss.HistNetTx
+	histDiskR := ss.HistDiskR
+	histDiskW := ss.HistDiskW
+	histVMsRun  := append([]float64(nil), ss.HistVMsRun...)
+	histQEMURun := append([]float64(nil), ss.HistQEMURun...)
+	histVBoxRun := append([]float64(nil), ss.HistVBoxRun...)
+	histVMwRun  := append([]float64(nil), ss.HistVMwRun...)
+	histDockRun := append([]float64(nil), ss.HistDockRun...)
+	histPodRun  := append([]float64(nil), ss.HistPodRun...)
+	histCores := make([][]float64, len(ss.HistCores))
+	for i, h := range ss.HistCores {
+		histCores[i] = append([]float64(nil), h...)
+	}
 	ss.mu.RUnlock()
 
 	var buf strings.Builder
@@ -163,7 +269,7 @@ func render(ss *SysState, ui *UI, t *Theme) {
 
 	switch ui.Tab {
 	case TAB_OVW:
-		drawOVW(&buf, rows, cols, cores, load, raplW, mem, gpu, disks, nets, gateway, audio, usb, vms, procs, cnts, ui, t, ss)
+		drawOVW(&buf, rows, cols, cores, load, raplW, mem, gpu, disks, nets, gateway, audio, usb, vms, procs, cnts, histCPU, histGPU, histVRAM, histNetRx, histNetTx, histDiskR, histDiskW, histVMsRun, histQEMURun, histVBoxRun, histVMwRun, histDockRun, histPodRun, histCores, ui, t, ss)
 	case TAB_DEV:
 		drawDEV(&buf, rows, cols, ss, ui, t)
 	case TAB_HEX:
@@ -636,9 +742,6 @@ func main() {
 		}
 	}()
 
-	frameTick := time.NewTicker(FRAME)
-	defer frameTick.Stop()
-
 	// initial render after short wait for first collect
 	time.Sleep(50 * time.Millisecond)
 	render(ss, ui, &theme)
@@ -650,7 +753,10 @@ func main() {
 				return
 			}
 			render(ss, ui, &theme)
-		case <-frameTick.C:
+		case <-time.After(time.Duration(collectIntervalNs.Load())):
+			if ui.Recording {
+				writeRecord(ss, ui.Interval)
+			}
 			render(ss, ui, &theme)
 		}
 	}

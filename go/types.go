@@ -146,6 +146,8 @@ type TraceEntry struct {
 	Count   int
 }
 
+const histLen = 30
+
 // SysState — collected data; mu protects all fields
 type SysState struct {
 	mu          sync.RWMutex
@@ -168,6 +170,23 @@ type SysState struct {
 	Battery     BattInfo
 	Uptime      int64
 	IRQs        []IRQDelta
+	// history ring buffers — appended every collect tick, trimmed to histLen
+	HistCPU   []float64
+	HistGPU   []float64
+	HistVRAM  []float64            // VRAM used %
+	HistNetRx map[string][]float64 // per-iface rx bps
+	HistNetTx map[string][]float64 // per-iface tx bps
+	HistDiskR map[string][]float64 // per-dev read bps (fixed + removable)
+	HistDiskW map[string][]float64 // per-dev write bps (fixed + removable)
+	HistCtxSw    []float64   // context switches/s
+	HistVMsRun   []float64   // total running VMs (all types)
+	HistQEMURun  []float64   // running QEMU VMs
+	HistVBoxRun  []float64   // running VirtualBox VMs
+	HistVMwRun   []float64   // running VMware VMs
+	HistDockRun  []float64   // running Docker containers
+	HistPodRun   []float64   // running Podman containers
+	HistCores    [][]float64 // per-core CPU % history
+
 	HexNetBufs  map[string][]byte
 	NetCapMu    sync.Mutex
 	traceMu     sync.Mutex

@@ -8,6 +8,26 @@ import (
 	"time"
 )
 
+// readCtxSwTotal — total context switches from /proc/schedstat (all CPUs)
+func readCtxSwTotal() int64 {
+	raw, err := os.ReadFile("/proc/schedstat")
+	if err != nil {
+		return 0
+	}
+	var total int64
+	for _, line := range strings.Split(string(raw), "\n") {
+		if !strings.HasPrefix(line, "cpu") || strings.HasPrefix(line, "cpu ") {
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) > 9 {
+			n, _ := strconv.ParseInt(f[9], 10, 64)
+			total += n
+		}
+	}
+	return total
+}
+
 // devPrev — previous vmstat/schedstat snapshot for rate calculations
 var devPrev struct {
 	nrSwitches int64
@@ -97,6 +117,15 @@ func drawDEV(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 			" ctx_switches:%d/s  swap_in:%d  swap_out:%d", swRate, swapIn, swapOut,
 		), cols) + RESET + CLEOL)
 		row++
+		// ctx switch sparkline
+		ss.mu.RLock()
+		ctxHist := append([]float64(nil), ss.HistCtxSw...)
+		ss.mu.RUnlock()
+		if len(ctxHist) > 0 && row < rows-3 {
+			buf.WriteString(pos(row, 0))
+			buf.WriteString(DIM + ansiCol(t.DISK) + " " + sparkline(ctxHist) + RESET + CLEOL)
+			row++
+		}
 	}
 
 	// ── KERNEL TUNABLES ───────────────────────────────────────────────────────
