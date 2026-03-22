@@ -96,7 +96,7 @@ func loadTheme() Theme {
 		if c, ok := xresColor(xres, "*.color6", "*.color14");       ok { t.ZRAM = c }
 	}
 
-	path := os.Getenv("HOME") + "/.config/pipboy/theme.json"
+	path := os.Getenv("HOME") + "/.config/bsc/theme.json"
 	f, err := os.Open(path)
 	if err != nil {
 		return t
