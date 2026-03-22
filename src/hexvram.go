@@ -208,22 +208,25 @@ func drawHexVRAM(buf *strings.Builder, rows, cols, paneW, sepX, dumpX, dumpW, bp
 	// status / error
 	row++
 	if vm.err != "" {
-		for r := row; r < paneH+1; r++ {
+		// clear entire left pane
+		for r := 1; r < paneH+1; r++ {
 			buf.WriteString(pos(r, 0) + CLEOL)
 		}
-		r := 2
-		warnLine := func(s string) {
-			buf.WriteString(pos(r, dumpX) + s + RESET + CLEOL)
+		// clear entire dump pane, then show error
+		r := 1
+		for ; r < rows-1; r++ {
+			buf.WriteString(pos(r, dumpX) + CLEOL)
+		}
+		r = 2
+		wl := func(s string) {
+			buf.WriteString(pos(r, dumpX) + s + RESET)
 			r++
 		}
-		warnLine(warn + "VRAM BAR1 unavailable")
-		warnLine(dim + vm.err)
+		wl(warn + "VRAM BAR1 unavailable")
+		wl(dim + vm.err)
 		if vm.pciDev != "" {
-			warnLine(dim + "pci: " + vm.pciDev)
-			warnLine(dim + "sudo chmod o+r " + vm.pciDev + "/resource1")
-		}
-		for ; r < rows-2; r++ {
-			buf.WriteString(pos(r, dumpX) + CLEOL)
+			wl(dim + "pci: " + vm.pciDev)
+			wl(dim + "sudo chmod o+r " + vm.pciDev + "/resource1")
 		}
 		return
 	}
@@ -234,6 +237,9 @@ func drawHexVRAM(buf *strings.Builder, rows, cols, paneW, sepX, dumpX, dumpW, bp
 	}
 
 	// ── right pane: hex dump of BAR1 ─────────────────────────────────────────
+	// clear top rows that may have stale content from previous hex source
+	buf.WriteString(pos(1, dumpX) + CLEOL)
+
 	totalBytes := int64(len(vm.data))
 	scroll := int64(ui.HexScroll) * int64(bpr)
 	if scroll > totalBytes {
