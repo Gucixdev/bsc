@@ -776,14 +776,8 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	info := DIM + ansiCol(t.USB)
 	_ = part
 
-	phL := func(label string) {
-		addL(ansiCol(t.HDR) + BOLD + " " + label + RESET)
-		addL(ansiCol(t.HDR) + DIM + strings.Repeat("─", lw) + RESET)
-	}
-	phR := func(label string) {
-		addR(ansiCol(t.HDR) + BOLD + " " + label + RESET)
-		addR(ansiCol(t.HDR) + DIM + strings.Repeat("─", rw) + RESET)
-	}
+	phL := func(label string) { addL(ansiCol(t.HDR) + BOLD + " " + label + RESET) }
+	phR := func(label string) { addR(ansiCol(t.HDR) + BOLD + " " + label + RESET) }
 	ph := func(label string, w int) string {
 		_ = w
 		return label // unused, kept for callers that pass to addL/addR directly
@@ -883,7 +877,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	}
 	addL(row(ldSt, "kernel lockdown", lockdown))
 
-	addL("")
 
 	phL("kernel taint")
 	taintVal, taintMsgs := readTaint()
@@ -896,7 +889,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		}
 	}
 
-	addL("")
 
 	phL("rootkit indicators")
 
@@ -1001,7 +993,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	}
 	addL(row(imaSt, "IMA", imaNote))
 
-	addL("")
 
 	phL("filesystem")
 
@@ -1096,7 +1087,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	}
 	addR(row(swapSt, "swap", swapEnc))
 
-	addR("")
 
 	phR("network security")
 
@@ -1132,7 +1122,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	addR(row(sysrqSt, "sysrq",
 		map[string]string{"0": "disabled", "1": "all keys — dangerous", "176": "safe subset", "?": "?"}[sysrq]))
 
-	addR("")
 
 	phR("network vulnerabilities")
 
@@ -1192,7 +1181,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	}
 	addR(row(udpSt, "UDP sockets", fmt.Sprintf("%d active", udpN)))
 
-	addR("")
 
 	phR("SSH hardening")
 	if _, err := os.Stat("/etc/ssh/sshd_config"); err != nil {
@@ -1229,7 +1217,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		}
 	}
 
-	addR("")
 
 	phR("security tools")
 	secTools := checkSecTools()
@@ -1250,7 +1237,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		addR(row(st, tool, note))
 	}
 
-	addR("")
 
 	phR("listening ports")
 	if len(ports) == 0 {
@@ -1273,7 +1259,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		}
 	}
 
-	addR("")
 
 	phR("established connections")
 	conns := readEstablished()
@@ -1303,7 +1288,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		}
 	}
 
-	addR("")
 
 	phR("users & access")
 
