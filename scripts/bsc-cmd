@@ -42,6 +42,16 @@ do_build() {
     esac
 }
 
+do_theme() {
+    t="${1:-}"
+    [ -z "$t" ] && { echo "usage: bsc-cmd theme matrix|light"; exit 1; }
+    src="$ROOT/theme/$t.json"
+    [ -f "$src" ] || { echo "unknown theme: $t"; ls "$ROOT/theme/"*.json 2>/dev/null | xargs -I{} basename {} .json; exit 1; }
+    mkdir -p "$CFG"
+    cp "$src" "$CFG/theme.json"
+    echo "theme → $t"
+}
+
 do_install() {
     ask_variant
     mkdir -p "$BIN" "$CFG"
@@ -64,7 +74,7 @@ do_install() {
         ;;
     esac
     if [ ! -f "$CFG/theme.json" ]; then
-        cp "$ROOT/theme/theme.json" "$CFG/theme.json"
+        cp "$ROOT/theme/matrix.json" "$CFG/theme.json"
         echo "theme → $CFG/theme.json"
     fi
     # bsc-cmd wrapper — put it in PATH if missing
@@ -151,7 +161,8 @@ case "$ACTION" in
 build)     do_build ;;
 install)   do_install ;;
 uninstall) do_uninstall ;;
+theme)     do_theme "$1" ;;
 info)      do_info ;;
-"")        echo "usage: bsc-cmd build|install|uninstall|info [go|py] [-y]" >&2; exit 1 ;;
+"")        echo "usage: bsc-cmd build|install|uninstall|theme|info [go|py] [-y]" >&2; exit 1 ;;
 *)         echo "unknown action: $ACTION" >&2; exit 1 ;;
 esac
