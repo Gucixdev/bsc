@@ -4,8 +4,8 @@
 set -e
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${HOME}/.local/bin"
-CFG="${XDG_CONFIG_HOME:-$HOME/.config}/pipboy"
-NAME="pipboy"
+CFG="${XDG_CONFIG_HOME:-$HOME/.config}/bsc"
+NAME="bsc"
 
 ACTION="$1"; shift || true
 VARIANT=""
