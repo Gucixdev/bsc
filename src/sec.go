@@ -620,6 +620,305 @@ func lynisScore() string {
 	return ""
 }
 
+func readCPUVulns() []string {
+	entries, err := os.ReadDir("/sys/devices/system/cpu/vulnerabilities")
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		raw, err := os.ReadFile("/sys/devices/system/cpu/vulnerabilities/" + e.Name())
+		if err != nil {
+			continue
+		}
+		out = append(out, e.Name()+"="+strings.TrimSpace(string(raw)))
+	}
+	return out
+}
+
+func checkSecureBoot() string {
+	entries, err := os.ReadDir("/sys/firmware/efi/efivars")
+	if err != nil {
+		return "no EFI"
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "SecureBoot-") {
+			raw, err := os.ReadFile("/sys/firmware/efi/efivars/" + e.Name())
+			if err == nil && len(raw) >= 5 {
+				if raw[4] == 1 {
+					return "enabled"
+				}
+				return "disabled"
+			}
+		}
+	}
+	return "unknown"
+}
+
+func checkTPM() bool {
+	entries, _ := os.ReadDir("/sys/class/tpm")
+	return len(entries) > 0
+}
+
+func checkMountOptions() map[string]string {
+	raw, err := os.ReadFile("/proc/mounts")
+	if err != nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 {
+			continue
+		}
+		out[f[1]] = f[3]
+	}
+	return out
+}
+
+func mountHasOpt(mounts map[string]string, point, opt string) bool {
+	opts, ok := mounts[point]
+	if !ok {
+		return false
+	}
+	for _, o := range strings.Split(opts, ",") {
+		if o == opt {
+			return true
+		}
+	}
+	return false
+}
+
+func checkServiceRunning(name string) bool {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		n := e.Name()
+		if len(n) == 0 || n[0] < '0' || n[0] > '9' {
+			continue
+		}
+		raw, _ := os.ReadFile("/proc/" + n + "/comm")
+		if strings.TrimSpace(string(raw)) == name {
+			return true
+		}
+	}
+	return false
+}
+
+func readLoginDefs() map[string]string {
+	out := map[string]string{}
+	raw, err := os.ReadFile("/etc/login.defs")
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) >= 2 {
+			out[f[0]] = f[1]
+		}
+	}
+	return out
+}
+
+func countCapProcs() int {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return -1
+	}
+	n := 0
+	for _, e := range entries {
+		name := e.Name()
+		if len(name) == 0 || name[0] < '0' || name[0] > '9' {
+			continue
+		}
+		raw, err := os.ReadFile("/proc/" + name + "/status")
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			if strings.HasPrefix(line, "CapEff:") {
+				f := strings.Fields(line)
+				if len(f) >= 2 && f[1] != "0000000000000000" {
+					n++
+				}
+				break
+			}
+		}
+	}
+	return n
+}
+
+func countRootProcs() int {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return -1
+	}
+	n := 0
+	for _, e := range entries {
+		name := e.Name()
+		if len(name) == 0 || name[0] < '0' || name[0] > '9' {
+			continue
+		}
+		raw, err := os.ReadFile("/proc/" + name + "/status")
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			if strings.HasPrefix(line, "Uid:") {
+				f := strings.Fields(line)
+				if len(f) >= 2 && f[1] == "0" {
+					n++
+				}
+				break
+			}
+		}
+	}
+	return n
+}
+
+func checkCronDirs() []string {
+	var bad []string
+	for _, dir := range []string{"/etc/cron.d", "/etc/cron.daily", "/etc/cron.weekly", "/etc/cron.monthly", "/var/spool/cron/crontabs"} {
+		info, err := os.Stat(dir)
+		if err != nil {
+			continue
+		}
+		if info.Mode().Perm()&002 != 0 {
+			bad = append(bad, dir)
+		}
+	}
+	return bad
+}
+
+func checkPasswdDupUID() bool {
+	raw, err := os.ReadFile("/etc/passwd")
+	if err != nil {
+		return false
+	}
+	uids := map[string]int{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		f := strings.Split(line, ":")
+		if len(f) < 4 {
+			continue
+		}
+		uids[f[2]]++
+	}
+	for _, v := range uids {
+		if v > 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func checkRootPasswdLocked() bool {
+	for _, path := range []string{"/etc/shadow", "/etc/master.passwd"} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			f := strings.Split(line, ":")
+			if len(f) >= 2 && f[0] == "root" {
+				p := f[1]
+				return p == "*" || p == "!" || p == "!!" || strings.HasPrefix(p, "!")
+			}
+		}
+	}
+	return false
+}
+
+func checkDockerSocket() string {
+	for _, p := range []string{"/var/run/docker.sock", "/run/docker.sock"} {
+		info, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		if info.Mode().Perm()&002 != 0 {
+			return "world-writable!"
+		}
+		return "exists"
+	}
+	return "none"
+}
+
+func checkUnattendedUpgrades() bool {
+	for _, p := range []string{
+		"/etc/apt/apt.conf.d/20auto-upgrades",
+		"/etc/apt/apt.conf.d/50unattended-upgrades",
+	} {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		if strings.Contains(string(raw), `"1"`) || strings.Contains(string(raw), `"true"`) {
+			return true
+		}
+	}
+	return false
+}
+
+func checkLDLibraryPathProcs() int {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		name := e.Name()
+		if len(name) == 0 || name[0] < '0' || name[0] > '9' {
+			continue
+		}
+		env, err := os.ReadFile("/proc/" + name + "/environ")
+		if err != nil {
+			continue
+		}
+		for _, kv := range strings.Split(string(env), "\x00") {
+			if strings.HasPrefix(kv, "LD_LIBRARY_PATH=") {
+				n++
+				break
+			}
+		}
+	}
+	return n
+}
+
+func checkStickyVarTmp() bool {
+	info, err := os.Stat("/var/tmp")
+	if err != nil {
+		return false
+	}
+	return info.Mode()&01000 != 0
+}
+
+func checkRootSSHDir() string {
+	info, err := os.Stat("/root/.ssh")
+	if err != nil {
+		return "n/a"
+	}
+	return fmt.Sprintf("%04o", info.Mode().Perm())
+}
+
+func checkHostsDenyExists() bool {
+	raw, err := os.ReadFile("/etc/hosts.deny")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			return true
+		}
+	}
+	return false
+}
+
 func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Theme) {
 	ss.mu.RLock()
 	vms := ss.VMs
@@ -668,8 +967,21 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	addl("kexec_disabled", map[string]string{"0":"allowed","1":"locked","?":"n/a"}[kexec]+" ("+kexec+")", bc(kexec == "1"))
 	addl("protected_symlinks", map[string]string{"0":"off","1":"on","?":"?"}[readSysctl("fs.protected_symlinks")], bc(readSysctl("fs.protected_symlinks") == "1"))
 	addl("protected_hardlinks", map[string]string{"0":"off","1":"on","?":"?"}[readSysctl("fs.protected_hardlinks")], bc(readSysctl("fs.protected_hardlinks") == "1"))
+	pfifos := readSysctl("fs.protected_fifos")
+	addl("protected_fifos", map[string]string{"0":"off","1":"restricted","2":"strict","?":"?"}[pfifos]+" ("+pfifos+")", bc(pfifos == "2"))
+	preg := readSysctl("fs.protected_regular")
+	addl("protected_regular", map[string]string{"0":"off","1":"restricted","2":"strict","?":"?"}[preg]+" ("+preg+")", bc(preg == "2"))
+	mmap := readSysctl("vm.mmap_min_addr")
+	mmapN, _ := strconv.Atoi(mmap)
+	addl("mmap_min_addr", mmap, bc(mmapN >= 65536))
+	ioring := readSysctl("kernel.unprivileged_io_uring_disabled")
+	addl("io_uring unpriv", map[string]string{"0":"allowed","1":"disabled","2":"disabled","?":"n/a"}[ioring]+" ("+ioring+")", bc(ioring == "1" || ioring == "2"))
+	corePID := readSysctl("kernel.core_uses_pid")
+	addl("core_uses_pid", map[string]string{"0":"off","1":"on","?":"?"}[corePID], bc(corePID == "1"))
 	ipfwd := readSysctl("net.ipv4.ip_forward")
 	addl("ip_forward", map[string]string{"0":"off","1":"ON — routing","?":"?"}[ipfwd], bc(ipfwd != "1"))
+	ip6fwd := readSysctl("net.ipv6.conf.all.forwarding")
+	addl("ipv6_forwarding", map[string]string{"0":"off","1":"ON — routing","?":"?"}[ip6fwd], bc(ip6fwd != "1"))
 	moddis := readSysctl("kernel.modules_disabled")
 	addl("modules_disabled", map[string]string{"0":"loadable","1":"locked","?":"n/a"}[moddis]+" ("+moddis+")", bc(moddis == "1"))
 	lockdown := checkKernelLockdown()
@@ -718,9 +1030,20 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	addh("filesystem")
 	wwCount := cachedWWEtc()
 	addl("world-writable /etc", fmt.Sprintf("%d files", wwCount), bc(wwCount == 0))
-	addl("/etc/shadow", checkFilePerms("/etc/shadow"), bc(checkFilePerms("/etc/shadow") == "640" || checkFilePerms("/etc/shadow") == "000" || checkFilePerms("/etc/shadow") == "000"))
+	shadowPerm := checkFilePerms("/etc/shadow")
+	addl("/etc/shadow", shadowPerm, bc(shadowPerm == "640" || shadowPerm == "000" || shadowPerm == "600"))
 	addl("/etc/passwd", checkFilePerms("/etc/passwd"), bc(checkFilePerms("/etc/passwd") == "644"))
 	addl("sudoers NOPASSWD", map[bool]string{true:"FOUND",false:"clean"}[checkSudoersNopasswd()], bc(!checkSudoersNopasswd()))
+	addl("dup UIDs /etc/passwd", map[bool]string{true:"FOUND",false:"clean"}[checkPasswdDupUID()], bc(!checkPasswdDupUID()))
+	addl("root passwd", map[bool]string{true:"locked",false:"active/unknown"}[checkRootPasswdLocked()], bc(checkRootPasswdLocked()))
+	rootSSH := checkRootSSHDir()
+	addl("/root/.ssh", rootSSH, bc(rootSSH == "n/a" || rootSSH == "0700"))
+	cronBad := checkCronDirs()
+	addl("cron dirs writable", fmt.Sprintf("%d dirs", len(cronBad)), bc(len(cronBad) == 0))
+	addl("/var/tmp sticky", map[bool]string{true:"set",false:"MISSING"}[checkStickyVarTmp()], bc(checkStickyVarTmp()))
+	addl("hosts.deny", map[bool]string{true:"has rules",false:"empty"}[checkHostsDenyExists()], bc(checkHostsDenyExists()))
+	dockerSock := checkDockerSocket()
+	addl("docker socket", dockerSock, bc(dockerSock == "none"))
 
 	// firewall & sandbox
 	addh("firewall & sandbox")
@@ -762,6 +1085,12 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	addl("bpf_jit_harden", map[string]string{"0":"disabled","1":"unprivileged","2":"all","?":"?"}[bpfjit], bc(bpfjit == "1" || bpfjit == "2"))
 	sysrq := readSysctl("kernel.sysrq")
 	addl("sysrq", map[string]string{"0":"disabled","1":"all keys","176":"safe subset","?":"?"}[sysrq], bc(sysrq != "1"))
+	acceptRA := readSysctl("net.ipv6.conf.all.accept_ra")
+	addl("ipv6 accept_ra", map[string]string{"0":"disabled","1":"enabled","2":"accept+fwd","?":"?"}[acceptRA], bc(acceptRA == "0"))
+	arpIgnore := readSysctl("net.ipv4.conf.all.arp_ignore")
+	addl("arp_ignore", map[string]string{"0":"reply all","1":"check iface","?":"?"}[arpIgnore], bc(arpIgnore != "0"))
+	arpAnnounce := readSysctl("net.ipv4.conf.all.arp_announce")
+	addl("arp_announce", map[string]string{"0":"any src","1":"avoid foreign","2":"best src","?":"?"}[arpAnnounce], bc(arpAnnounce == "2"))
 
 	// network vulnerabilities
 	addh("network vulnerabilities")
@@ -784,6 +1113,12 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	ports := readListenPorts()
 	addl("DNS port 53", map[bool]string{true:"LISTENING",false:"closed"}[checkPortOpen(ports, 53)], bc(!checkPortOpen(ports, 53)))
 	addl("SMTP 25/587", map[bool]string{true:"LISTENING",false:"closed"}[checkPortOpen(ports, 25) || checkPortOpen(ports, 587)], bc(!checkPortOpen(ports, 25) && !checkPortOpen(ports, 587)))
+	addl("Telnet 23", map[bool]string{true:"OPEN!",false:"closed"}[checkPortOpen(ports, 23)], bc(!checkPortOpen(ports, 23)))
+	addl("FTP 21", map[bool]string{true:"OPEN!",false:"closed"}[checkPortOpen(ports, 21)], bc(!checkPortOpen(ports, 21)))
+	addl("rsh 514", map[bool]string{true:"OPEN!",false:"closed"}[checkPortOpen(ports, 514)], bc(!checkPortOpen(ports, 514)))
+	addl("VNC 5900", map[bool]string{true:"OPEN",false:"closed"}[checkPortOpen(ports, 5900)], bc(!checkPortOpen(ports, 5900)))
+	addl("SMB 445", map[bool]string{true:"OPEN",false:"closed"}[checkPortOpen(ports, 445)], bc(!checkPortOpen(ports, 445)))
+	addl("RDP 3389", map[bool]string{true:"OPEN",false:"closed"}[checkPortOpen(ports, 3389)], bc(!checkPortOpen(ports, 3389)))
 	udpN := countUDPListen()
 	addl("UDP sockets", fmt.Sprintf("%d active", udpN), bc(udpN <= 10))
 
@@ -823,6 +1158,91 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		}
 		addl(tool, note, bc(inst))
 	}
+
+	// cpu vulnerabilities
+	addh("cpu vulnerabilities")
+	cpuVulns := readCPUVulns()
+	if len(cpuVulns) == 0 {
+		add(ColLine{Text: "  n/a (no sysfs)", C: inf, Dim: true})
+	} else {
+		for _, v := range cpuVulns {
+			parts := strings.SplitN(v, "=", 2)
+			if len(parts) != 2 { continue }
+			name, status := parts[0], parts[1]
+			mitigated := strings.Contains(status, "Mitigation") || status == "Not affected"
+			c := ok
+			if !mitigated { c = warn }
+			addl(name, status, c)
+		}
+	}
+
+	// boot security
+	addh("boot security")
+	sb := checkSecureBoot()
+	addl("Secure Boot", sb, bc(sb == "enabled"))
+	addl("TPM", map[bool]string{true:"present",false:"absent"}[checkTPM()], bc(checkTPM()))
+	addl("UEFI", map[string]string{"no EFI":"Legacy BIOS","enabled":"UEFI","disabled":"UEFI","unknown":"UEFI"}[sb], bc(sb != "no EFI"))
+
+	// mount security
+	addh("mount security")
+	mounts := checkMountOptions()
+	checkMount := func(point, opt string) {
+		has := mountHasOpt(mounts, point, opt)
+		_, exists := mounts[point]
+		if !exists {
+			addl(point+" "+opt, "not mounted", inf)
+			return
+		}
+		addl(point+" "+opt, map[bool]string{true:"yes",false:"NO"}[has], bc(has))
+	}
+	checkMount("/tmp", "noexec")
+	checkMount("/tmp", "nosuid")
+	checkMount("/tmp", "nodev")
+	checkMount("/var/tmp", "noexec")
+	checkMount("/var/tmp", "nosuid")
+	checkMount("/home", "nosuid")
+	checkMount("/home", "nodev")
+	checkMount("/dev/shm", "noexec")
+	checkMount("/dev/shm", "nosuid")
+	checkMount("/dev/shm", "nodev")
+	checkMount("/proc", "hidepid")
+
+	// process security
+	addh("process security")
+	capN := countCapProcs()
+	addl("procs w/ caps", fmt.Sprintf("%d", capN), bc(capN < 20))
+	rootN := countRootProcs()
+	addl("root procs", fmt.Sprintf("%d", rootN), bc(rootN < 50))
+	ldlibN := checkLDLibraryPathProcs()
+	addl("LD_LIBRARY_PATH", fmt.Sprintf("%d procs", ldlibN), bc(ldlibN == 0))
+
+	// audit & logging
+	addh("audit & logging")
+	addl("auditd", map[bool]string{true:"running",false:"not running"}[checkServiceRunning("auditd")], bc(checkServiceRunning("auditd")))
+	addl("fail2ban", map[bool]string{true:"running",false:"not running"}[checkServiceRunning("fail2ban-server") || checkServiceRunning("fail2ban")], bc(checkServiceRunning("fail2ban-server") || checkServiceRunning("fail2ban")))
+	addl("syslog", map[bool]string{true:"running",false:"not running"}[checkServiceRunning("rsyslogd") || checkServiceRunning("syslogd")], bc(checkServiceRunning("rsyslogd") || checkServiceRunning("syslogd")))
+	addl("auto-upgrades", map[bool]string{true:"enabled",false:"disabled"}[checkUnattendedUpgrades()], bc(checkUnattendedUpgrades()))
+
+	// password policy
+	addh("password policy")
+	ld := readLoginDefs()
+	getLD := func(key, dflt string) string {
+		if v, ok := ld[key]; ok { return v }
+		return dflt
+	}
+	passMax := getLD("PASS_MAX_DAYS", "?")
+	passMaxN, _ := strconv.Atoi(passMax)
+	addl("PASS_MAX_DAYS", passMax, bc(passMaxN > 0 && passMaxN <= 90))
+	passMin := getLD("PASS_MIN_DAYS", "?")
+	passMinN, _ := strconv.Atoi(passMin)
+	addl("PASS_MIN_DAYS", passMin, bc(passMinN >= 1))
+	passWarn := getLD("PASS_WARN_AGE", "?")
+	passWarnN, _ := strconv.Atoi(passWarn)
+	addl("PASS_WARN_AGE", passWarn, bc(passWarnN >= 7))
+	addl("ENCRYPT_METHOD", getLD("ENCRYPT_METHOD", "?"), bc(getLD("ENCRYPT_METHOD", "DES") != "DES"))
+	addl("SHA_CRYPT_ROUNDS", getLD("SHA_CRYPT_MIN_ROUNDS", "default"), bc(true))
+	umask := getLD("UMASK", "?")
+	addl("UMASK", umask, bc(umask == "027" || umask == "077"))
 
 	// listening ports
 	addh("listening ports")
