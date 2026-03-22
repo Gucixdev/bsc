@@ -33,7 +33,6 @@ const (
 )
 
 const (
-	RESET   = "\033[0m"
 	BOLD    = "\033[1m"
 	DIM     = "\033[2m"
 	REV     = "\033[7m"
@@ -45,3 +44,6 @@ const (
 	SYNCOFF = "\033[?2026l"
 	CLEOL   = "\033[K"
 )
+
+// RESET is a var so light theme can append bgCol after reset
+var RESET = "\033[0m"

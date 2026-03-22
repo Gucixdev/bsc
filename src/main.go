@@ -706,6 +706,9 @@ func main() {
 		strings.HasSuffix(term, "-direct") ||
 		strings.Contains(os.Getenv("TERM_PROGRAM"), "iTerm")
 	theme := loadTheme()
+	if theme.HasBG {
+		RESET = "\033[0m" + bgCol(theme.BG)
+	}
 
 	rawOn()
 	defer rawOff()
@@ -718,7 +721,11 @@ func main() {
 		os.Exit(0)
 	}()
 
-	os.Stdout.WriteString(CLRSCR + HOME)
+	if theme.HasBG {
+		os.Stdout.WriteString(bgCol(theme.BG) + CLRSCR + HOME)
+	} else {
+		os.Stdout.WriteString(CLRSCR + HOME)
+	}
 
 	ss := &SysState{}
 	ui := &UI{
