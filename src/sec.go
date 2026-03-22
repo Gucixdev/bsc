@@ -1021,7 +1021,7 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		return ColLine{Text: text, Pre: true}
 	}
 	hdr := func(name string) ColLine {
-		return ColLine{Text: " " + BOLD + ansiCol(t.HDR) + name, Pre: true}
+		return ColLine{Text: " " + BOLD + ansiCol(t.HDR) + name, Pre: true, Bold: true}
 	}
 
 	var lines []ColLine
@@ -1420,25 +1420,68 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	nCols := 1
 	if cols >= 140 { nCols = 3 } else if cols >= 80 { nCols = 2 }
 
-	// split lines into nCols columns (balanced)
-	total := len(lines)
-	perCol := (total + nCols - 1) / nCols
+	// collect section spans (each section starts with a Bold=true hdr line)
+	type span struct{ s, e int }
+	var sections []span
+	secStart := 0
+	for i, l := range lines {
+		if i > 0 && l.Bold {
+			sections = append(sections, span{secStart, i})
+			secStart = i
+		}
+	}
+	sections = append(sections, span{secStart, len(lines)})
+
+	// greedy balanced distribution of sections into columns
+	// target: equal line count per column; never split a section
+	totalLines := len(lines)
+	targetH := (totalLines + nCols - 1) / nCols
 	colData := make([][]ColLine, nCols)
-	for i := 0; i < nCols; i++ {
-		start := i * perCol
-		end := start + perCol
-		if end > total { end = total }
-		if start < total { colData[i] = lines[start:end] }
+	ci := 0
+	curH := 0
+	for _, sp := range sections {
+		h := sp.e - sp.s
+		if ci < nCols-1 && curH > 0 && curH+h > targetH {
+			ci++
+			curH = 0
+		}
+		colData[ci] = append(colData[ci], lines[sp.s:sp.e]...)
+		curH += h
 	}
 
-	colW := cols / nCols
+	// tight column widths: max visual content width per column
 	widths := make([]int, nCols)
-	for i := range widths { widths[i] = colW }
-	widths[nCols-1] = cols - colW*(nCols-1)
+	for i, col := range colData {
+		w := 10
+		for _, l := range col {
+			if vl := visualLen(l.Text); vl > w {
+				w = vl
+			}
+		}
+		widths[i] = w + 1 // +1 breathing room
+	}
+	// last column fills remaining space
+	used := 0
+	for i := 0; i < nCols-1; i++ { used += widths[i] }
+	if rem := cols - used; rem > widths[nCols-1] {
+		widths[nCols-1] = rem
+	}
+	// safety: if tight widths exceed terminal, fall back to even split
+	total := 0
+	for _, w := range widths { total += w }
+	if total > cols {
+		even := cols / nCols
+		for i := range widths { widths[i] = even }
+		widths[nCols-1] = cols - even*(nCols-1)
+	}
 
 	// render — no dividers
 	displayRows := rows - 2
-	maxScroll := max(0, perCol-displayRows)
+	maxColH := 0
+	for _, col := range colData {
+		if len(col) > maxColH { maxColH = len(col) }
+	}
+	maxScroll := max(0, maxColH-displayRows)
 	if ui.SecScroll > maxScroll { ui.SecScroll = maxScroll }
 
 	for row := 0; row < displayRows; row++ {

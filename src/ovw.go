@@ -198,6 +198,10 @@ func colRAMGPU(mem MemStat, gpu GPUStat, histGPU, histVRAM []float64, h int, t *
 	mrow("RAM", mem.UsedKB, mem.TotalKB, false)
 	mrow("SWP", mem.SwapUsedKB, mem.SwapTotKB, mem.SwapTotKB == 0)
 	mrow("ZRM", mem.ZramUsedKB, mem.ZramTotKB, mem.ZramTotKB == 0)
+	if gpu.VRAMTot > 0 {
+		mrow("VRM", int(gpu.VRAMUsed>>10), int(gpu.VRAMTot>>10), false)
+		add(sparkline(histVRAM), pctColor(float64(pct2(int(gpu.VRAMUsed>>10), int(gpu.VRAMTot>>10))), t), true, false)
+	}
 
 	switch gpu.Source {
 	case "nvidia-smi", "nvidia-proc":
@@ -213,14 +217,6 @@ func colRAMGPU(mem MemStat, gpu GPUStat, histGPU, histVRAM []float64, h int, t *
 		add(fmt.Sprintf("util:%3d%% %2dC %.0fW%s", gpu.Util, gpu.TempC, gpu.Power, fanS),
 			t.GPU, false, false)
 		add(sparkline(histGPU), t.GPU, true, false)
-		if gpu.VRAMTot > 0 {
-			vu := int(gpu.VRAMUsed >> 20)
-			vt := int(gpu.VRAMTot >> 20)
-			p := pct2(vu, vt)
-			add(fmt.Sprintf("VRAM %s/%s %d%%", fmtMem(vu*1024), fmtMem(vt*1024), p),
-				pctColor(float64(p), t), false, false)
-			add(sparkline(histVRAM), pctColor(float64(p), t), true, false)
-		}
 		if gpu.Driver != "" {
 			add("drv:"+gpu.Driver, t.GPU, true, false)
 		}
@@ -243,14 +239,6 @@ func colRAMGPU(mem MemStat, gpu GPUStat, histGPU, histVRAM []float64, h int, t *
 		if parts != "" {
 			add(strings.TrimSpace(parts), t.GPU, false, false)
 			add(sparkline(histGPU), t.GPU, true, false)
-		}
-		if gpu.VRAMTot > 0 {
-			vu := int(gpu.VRAMUsed >> 20)
-			vt := int(gpu.VRAMTot >> 20)
-			p := pct2(vu, vt)
-			add(fmt.Sprintf("VRAM %s/%s %d%%", fmtMem(vu*1024), fmtMem(vt*1024), p),
-				pctColor(float64(p), t), false, false)
-			add(sparkline(histVRAM), pctColor(float64(p), t), true, false)
 		}
 		if gpu.Driver != "" {
 			add("drv:"+gpu.Driver, t.GPU, true, false)
