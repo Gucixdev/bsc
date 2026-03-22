@@ -1002,6 +1002,362 @@ func checkHostsDenyExists() bool {
 	return false
 }
 
+func checkIOMMU() string {
+	entries, err := os.ReadDir("/sys/kernel/iommu_groups")
+	if err != nil || len(entries) == 0 {
+		return "disabled"
+	}
+	return fmt.Sprintf("active (%d groups)", len(entries))
+}
+
+func checkMicrocode() string {
+	raw, err := os.ReadFile("/sys/devices/system/cpu/cpu0/microcode/version")
+	if err != nil {
+		return "n/a"
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+func checkCPUSecFlags() []string {
+	raw, err := os.ReadFile("/proc/cpuinfo")
+	if err != nil {
+		return nil
+	}
+	want := map[string]bool{"nx": false, "smep": false, "smap": false, "umip": false, "pti": false}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if !strings.HasPrefix(line, "flags") {
+			continue
+		}
+		for _, f := range strings.Fields(line) {
+			if _, ok := want[f]; ok {
+				want[f] = true
+			}
+		}
+		break
+	}
+	var out []string
+	for _, name := range []string{"nx", "smep", "smap", "umip", "pti"} {
+		state := "missing"
+		if want[name] {
+			state = "present"
+		}
+		out = append(out, name+"="+state)
+	}
+	return out
+}
+
+func checkDangerousModules() []string {
+	raw, err := os.ReadFile("/proc/modules")
+	if err != nil {
+		return nil
+	}
+	dangerous := []string{"firewire_ohci", "firewire_core", "thunderbolt", "usbip_core", "usb_storage"}
+	loaded := map[string]bool{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		f := strings.Fields(line)
+		if len(f) > 0 {
+			loaded[f[0]] = true
+		}
+	}
+	var found []string
+	for _, m := range dangerous {
+		if loaded[m] {
+			found = append(found, m)
+		}
+	}
+	return found
+}
+
+func countLoadedModules() int {
+	raw, err := os.ReadFile("/proc/modules")
+	if err != nil {
+		return -1
+	}
+	n := 0
+	for _, line := range strings.Split(string(raw), "\n") {
+		if line != "" {
+			n++
+		}
+	}
+	return n
+}
+
+func readEntropy() int {
+	raw, err := os.ReadFile("/proc/sys/kernel/random/entropy_avail")
+	if err != nil {
+		return -1
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(string(raw)))
+	return n
+}
+
+func readEntropyPoolSize() int {
+	raw, err := os.ReadFile("/proc/sys/kernel/random/poolsize")
+	if err != nil {
+		return 4096
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(string(raw)))
+	return n
+}
+
+func checkHWRNG() string {
+	raw, err := os.ReadFile("/sys/class/misc/hw_random/rng_current")
+	if err != nil {
+		return "none"
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+func checkTimeSync() (service string, running bool) {
+	for _, s := range []string{"chronyd", "ntpd", "timesyncd", "openntpd"} {
+		if checkServiceRunning(s) {
+			return s, true
+		}
+	}
+	return "none", false
+}
+
+func checkTimeSyncOffset() string {
+	for _, path := range []string{"/run/chrony/chrony.sock", "/var/run/chrony/chrony.sock"} {
+		if _, err := os.Stat(path); err == nil {
+			return "chrony"
+		}
+	}
+	raw, err := os.ReadFile("/run/systemd/timesync/synchronized")
+	if err == nil {
+		_ = raw
+		return "synced"
+	}
+	return ""
+}
+
+func countIPTablesRules() (int, int) {
+	out := runCmd(2000000000, "iptables", "-L", "--line-numbers", "-n")
+	if out == "" {
+		return -1, -1
+	}
+	chains, rules := 0, 0
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "Chain ") {
+			chains++
+		} else if line != "" && !strings.HasPrefix(line, "target") && !strings.HasPrefix(line, "num") {
+			rules++
+		}
+	}
+	return chains, rules
+}
+
+func countNFTRules() int {
+	out := runCmd(2000000000, "nft", "list", "ruleset")
+	if out == "" {
+		return -1
+	}
+	n := 0
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "table") &&
+			!strings.HasPrefix(line, "chain") &&
+			!strings.HasPrefix(line, "{") &&
+			!strings.HasPrefix(line, "}") &&
+			!strings.HasPrefix(line, "type") &&
+			!strings.HasPrefix(line, "hook") {
+			n++
+		}
+	}
+	return n
+}
+
+func checkDangerousGroups() map[string][]string {
+	out := map[string][]string{}
+	raw, err := os.ReadFile("/etc/group")
+	if err != nil {
+		return out
+	}
+	sensitive := map[string]bool{
+		"sudo": true, "wheel": true, "admin": true, "docker": true,
+		"disk": true, "video": true, "kvm": true, "lxd": true,
+		"plugdev": true, "adm": true,
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		f := strings.Split(line, ":")
+		if len(f) < 4 || !sensitive[f[0]] {
+			continue
+		}
+		members := strings.TrimSpace(f[3])
+		if members == "" {
+			continue
+		}
+		out[f[0]] = strings.Split(members, ",")
+	}
+	return out
+}
+
+func checkShadowEmptyPasswords() []string {
+	raw, err := os.ReadFile("/etc/shadow")
+	if err != nil {
+		return nil
+	}
+	var bad []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		f := strings.Split(line, ":")
+		if len(f) < 2 {
+			continue
+		}
+		if f[1] == "" {
+			bad = append(bad, f[0])
+		}
+	}
+	return bad
+}
+
+func checkUID0Accounts() []string {
+	raw, err := os.ReadFile("/etc/passwd")
+	if err != nil {
+		return nil
+	}
+	var accounts []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		f := strings.Split(line, ":")
+		if len(f) >= 4 && f[2] == "0" && f[0] != "root" {
+			accounts = append(accounts, f[0])
+		}
+	}
+	return accounts
+}
+
+func checkPromisc() []string {
+	entries, err := os.ReadDir("/sys/class/net")
+	if err != nil {
+		return nil
+	}
+	var promisc []string
+	for _, e := range entries {
+		raw, err := os.ReadFile("/sys/class/net/" + e.Name() + "/flags")
+		if err != nil {
+			continue
+		}
+		v, err := strconv.ParseUint(strings.TrimSpace(strings.TrimPrefix(string(raw), "0x")), 16, 64)
+		if err != nil {
+			continue
+		}
+		if v&0x100 != 0 { // IFF_PROMISC
+			promisc = append(promisc, e.Name())
+		}
+	}
+	return promisc
+}
+
+func checkRootPath() []string {
+	raw, err := os.ReadFile("/proc/1/environ")
+	if err != nil {
+		return nil
+	}
+	for _, kv := range strings.Split(string(raw), "\x00") {
+		if !strings.HasPrefix(kv, "PATH=") {
+			continue
+		}
+		val := strings.TrimPrefix(kv, "PATH=")
+		var bad []string
+		for _, dir := range strings.Split(val, ":") {
+			if dir == "" || dir == "." {
+				bad = append(bad, "'.'")
+				continue
+			}
+			info, err := os.Stat(dir)
+			if err != nil {
+				continue
+			}
+			if info.Mode().Perm()&002 != 0 {
+				bad = append(bad, dir)
+			}
+		}
+		return bad
+	}
+	return nil
+}
+
+func checkDockerContainers() (total, privileged int) {
+	entries, err := os.ReadDir("/sys/fs/cgroup/system.slice")
+	if err != nil {
+		entries, err = os.ReadDir("/sys/fs/cgroup")
+	}
+	if err != nil {
+		return -1, -1
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "docker") {
+			total++
+		}
+	}
+	// check privileged via /proc: containers with full capabilities
+	return total, 0
+}
+
+func checkWritableSystemDirs() []string {
+	var bad []string
+	for _, dir := range []string{"/usr/bin", "/usr/sbin", "/bin", "/sbin", "/lib", "/lib64", "/usr/lib"} {
+		info, err := os.Stat(dir)
+		if err != nil {
+			continue
+		}
+		if info.Mode().Perm()&002 != 0 {
+			bad = append(bad, dir)
+		}
+	}
+	return bad
+}
+
+func checkLastLogin() string {
+	out := runCmd(2000000000, "last", "-n", "1", "-F")
+	if out == "" {
+		return "n/a"
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) > 0 && lines[0] != "" {
+		f := strings.Fields(lines[0])
+		if len(f) >= 5 {
+			return strings.Join(f[:7], " ")
+		}
+	}
+	return "n/a"
+}
+
+func checkPAMConfig() map[string]bool {
+	out := map[string]bool{}
+	for _, path := range []string{"/etc/pam.d/common-password", "/etc/pam.d/system-auth"} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		content := string(raw)
+		out["pwquality"] = strings.Contains(content, "pwquality") || strings.Contains(content, "pam_pwquality")
+		out["faillock"] = strings.Contains(content, "faillock") || strings.Contains(content, "pam_tally")
+		out["cracklib"] = strings.Contains(content, "cracklib")
+	}
+	return out
+}
+
+func checkKernelPtrRestrict() bool {
+	raw, err := os.ReadFile("/proc/sys/kernel/kptr_restrict")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(raw)) != "0"
+}
+
+func countOpenFiles() int {
+	raw, err := os.ReadFile("/proc/sys/fs/file-nr")
+	if err != nil {
+		return -1
+	}
+	f := strings.Fields(string(raw))
+	if len(f) < 1 {
+		return -1
+	}
+	n, _ := strconv.Atoi(f[0])
+	return n
+}
+
 func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Theme) {
 	ss.mu.RLock()
 	vms := ss.VMs
@@ -1311,6 +1667,94 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	addl("SHA_CRYPT_ROUNDS", getLD("SHA_CRYPT_MIN_ROUNDS", "default"), bc(true))
 	umask := getLD("UMASK", "?")
 	addl("UMASK", umask, bc(umask == "027" || umask == "077"))
+
+	// hardware security
+	addh("hardware security")
+	iommu := checkIOMMU()
+	addl("IOMMU", iommu, bc(iommu != "disabled"))
+	addl("microcode", checkMicrocode(), inf)
+	for _, flag := range checkCPUSecFlags() {
+		parts := strings.SplitN(flag, "=", 2)
+		if len(parts) == 2 {
+			addl(parts[0], parts[1], bc(parts[1] == "present"))
+		}
+	}
+
+	// kernel modules
+	addh("kernel modules")
+	modCount := countLoadedModules()
+	addl("loaded", fmt.Sprintf("%d", modCount), inf)
+	dangerous := checkDangerousModules()
+	addl("dma-capable mods", fmt.Sprintf("%d loaded", len(dangerous)), bc(len(dangerous) == 0))
+	for _, m := range dangerous {
+		add(ColLine{Text: fmt.Sprintf("   ! %s", m), C: warn})
+	}
+
+	// entropy & rng
+	addh("entropy & rng")
+	entropy := readEntropy()
+	pool := readEntropyPoolSize()
+	addl("entropy_avail", fmt.Sprintf("%d / %d", entropy, pool), bc(entropy > 1000))
+	addl("hw_random", checkHWRNG(), bc(checkHWRNG() != "none"))
+
+	// time sync
+	addh("time sync")
+	tsvc, trunning := checkTimeSync()
+	addl("service", tsvc, bc(trunning))
+	addl("synced", checkTimeSyncOffset(), bc(checkTimeSyncOffset() != ""))
+
+	// firewall rules
+	addh("firewall rules")
+	iptChains, iptRules := countIPTablesRules()
+	if iptChains < 0 {
+		add(ColLine{Text: "  iptables: n/a", C: inf, Dim: true})
+	} else {
+		addl("iptables rules", fmt.Sprintf("%d rules in %d chains", iptRules, iptChains), bc(iptRules > 0))
+	}
+	nftRules := countNFTRules()
+	if nftRules < 0 {
+		add(ColLine{Text: "  nftables: n/a", C: inf, Dim: true})
+	} else {
+		addl("nftables rules", fmt.Sprintf("%d", nftRules), bc(nftRules > 0))
+	}
+
+	// group security
+	addh("group security")
+	uid0 := checkUID0Accounts()
+	addl("extra UID 0", fmt.Sprintf("%d accounts", len(uid0)), bc(len(uid0) == 0))
+	for _, u := range uid0 { add(ColLine{Text: "   ! " + u, C: warn}) }
+	emptyPw := checkShadowEmptyPasswords()
+	addl("empty passwords", fmt.Sprintf("%d accounts", len(emptyPw)), bc(len(emptyPw) == 0))
+	for _, u := range emptyPw { add(ColLine{Text: "   ! " + u, C: warn}) }
+	dangerGroups := checkDangerousGroups()
+	for _, g := range []string{"sudo", "wheel", "admin", "docker", "disk", "kvm", "lxd", "adm"} {
+		members, ok := dangerGroups[g]
+		if !ok { continue }
+		addl(g, strings.Join(members, ","), bc(g != "docker" && g != "disk" && g != "lxd"))
+	}
+	pamCfg := checkPAMConfig()
+	addl("PAM pwquality", map[bool]string{true:"enabled",false:"missing"}[pamCfg["pwquality"] || pamCfg["cracklib"]], bc(pamCfg["pwquality"] || pamCfg["cracklib"]))
+	addl("PAM faillock", map[bool]string{true:"enabled",false:"missing"}[pamCfg["faillock"]], bc(pamCfg["faillock"]))
+
+	// network interfaces
+	addh("network interfaces")
+	promisc := checkPromisc()
+	addl("promiscuous", fmt.Sprintf("%d ifaces", len(promisc)), bc(len(promisc) == 0))
+	for _, iface := range promisc { add(ColLine{Text: "   ! " + iface, C: warn}) }
+
+	// env & path security
+	addh("env & path security")
+	badPath := checkRootPath()
+	addl("root PATH unsafe", fmt.Sprintf("%d dirs", len(badPath)), bc(len(badPath) == 0))
+	for _, d := range badPath { add(ColLine{Text: "   ! " + d, C: warn}) }
+	sysDirsBad := checkWritableSystemDirs()
+	addl("writable sysdirs", fmt.Sprintf("%d", len(sysDirsBad)), bc(len(sysDirsBad) == 0))
+	openFiles := countOpenFiles()
+	if openFiles >= 0 { addl("open file handles", fmt.Sprintf("%d", openFiles), inf) }
+
+	// access log
+	addh("access log")
+	addl("last login", checkLastLogin(), inf)
 
 	// listening ports
 	addh("listening ports")
