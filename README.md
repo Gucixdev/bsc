@@ -47,12 +47,20 @@ Single-file Go TUI. No external deps — stdlib only. Static binary, zero runtim
 
 ## SEC tab
 
-- kernel hardening (ASLR, kptr_restrict, ptrace_scope, dmesg_restrict, perf_event_paranoid, NX/SMEP/SMAP)
-- kernel taint flags
-- rootkit indicators (proc count discrepancy, kallsyms leak, raw sockets, LD_PRELOAD, unsigned modules, SUID/SGID binaries, hidden processes)
-- MAC / firewall (AppArmor, SELinux, iptables/nftables)
-- network security (listening ports, established connections, external IPs, UDP listeners)
-- users & access (logged users, shell users, SSH authorized_keys)
+Two-column panel layout — scroll with `↑↓`.
+
+**Left — kernel & rootkit**
+- kernel hardening: ASLR, kptr_restrict, dmesg_restrict, perf_event_paranoid, ptrace_scope (Yama), suid_dumpable, unprivileged_bpf, unprivileged_userns_clone, kexec_load_disabled, protected_symlinks/hardlinks, ip_forward, modules_disabled, kernel lockdown
+- kernel taint flags (all 18 bits)
+- rootkit indicators: hidden proc delta, LD_PRELOAD injection, kallsyms address leak, raw sockets, unsigned/OOT modules, SUID/SGID binary count, /etc/ld.so.preload, core_pattern pipe, /tmp sticky bit, IMA policy
+
+**Right — firewall, network, users**
+- firewall & sandbox: AppArmor, SELinux, iptables/nftables, Firejail (installed + active sandboxes), seccomp filter process count, swap encryption
+- network security: tcp_syncookies, rp_filter, accept_redirects, log_martians, tcp_timestamps, bpf_jit_harden, sysrq
+- network vulnerabilities: source routing (ipv4/ipv6), send_redirects, icmp_bogus, tcp_rfc1337, IPv6 privacy extensions, IPv6 redirects, ICMP rate limit, open DNS/SMTP port detection, UDP socket count
+- listening ports (all TCP)
+- established connections (external IP list)
+- users & access: shell users, SSH authorized_keys, logged-in sessions
 
 ## HEX tab
 
