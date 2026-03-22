@@ -1,0 +1,13 @@
+{
+  "HDR":  "#7700ff",
+  "CPU":  "#9944ff",
+  "GPU":  "#00ff41",
+  "RAM":  "#ffd700",
+  "ZRAM": "#af87ff",
+  "DISK": "#00ff41",
+  "NET":  "#0087ff",
+  "SEL":  "#ffff00",
+  "USB":  "#7700ff",
+  "MARK": "#ff8700",
+  "WARN": "#ff0000"
+}
