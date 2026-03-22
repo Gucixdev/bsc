@@ -776,14 +776,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	info := DIM + ansiCol(t.USB)
 	_ = part
 
-	phL := func(label string) { addL(ansiCol(t.HDR) + BOLD + " " + label + RESET) }
-	phR := func(label string) { addR(ansiCol(t.HDR) + BOLD + " " + label + RESET) }
-	ph := func(label string, w int) string {
-		_ = w
-		return label // unused, kept for callers that pass to addL/addR directly
-	}
-	_ = ph
-
 	boolOK := func(v string, good ...string) string {
 		for _, g := range good {
 			if v == g {
@@ -803,7 +795,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 
 	// LEFT COLUMN
 
-	phL("kernel hardening")
 
 	aslr := readSysctl("kernel.randomize_va_space")
 	aslrSt := warn
@@ -878,7 +869,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	addL(row(ldSt, "kernel lockdown", lockdown))
 
 
-	phL("kernel taint")
 	taintVal, taintMsgs := readTaint()
 	if taintVal == 0 {
 		addL(row(ok, "tainted", "0 — clean"))
@@ -890,7 +880,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	}
 
 
-	phL("rootkit indicators")
 
 	procN, lavgN, delta := hiddenProcDelta()
 	hdSt := ok
@@ -994,7 +983,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	addL(row(imaSt, "IMA", imaNote))
 
 
-	phL("filesystem")
 
 	wwCount := cachedWWEtc()
 	wwSt := ok
@@ -1030,7 +1018,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 
 	// RIGHT COLUMN
 
-	phR("firewall & sandbox")
 
 	aaSt := warn
 	if vms.AppArmor {
@@ -1088,7 +1075,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	addR(row(swapSt, "swap", swapEnc))
 
 
-	phR("network security")
 
 	syncook := readSysctl("net.ipv4.tcp_syncookies")
 	addR(row(boolOK(syncook, "1"), "tcp_syncookies",
@@ -1123,7 +1109,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		map[string]string{"0": "disabled", "1": "all keys — dangerous", "176": "safe subset", "?": "?"}[sysrq]))
 
 
-	phR("network vulnerabilities")
 
 	srcRoute4 := readSysctl("net.ipv4.conf.all.accept_source_route")
 	addR(row(boolOK(srcRoute4, "0"), "source_route ipv4",
@@ -1182,7 +1167,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	addR(row(udpSt, "UDP sockets", fmt.Sprintf("%d active", udpN)))
 
 
-	phR("SSH hardening")
 	if _, err := os.Stat("/etc/ssh/sshd_config"); err != nil {
 		addR(info + "  sshd not found" + RESET)
 	} else {
@@ -1218,7 +1202,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	}
 
 
-	phR("security tools")
 	secTools := checkSecTools()
 	toolOrder := []string{"lynis", "rkhunter", "chkrootkit", "aide", "clamscan", "debsums", "tiger"}
 	for _, tool := range toolOrder {
@@ -1238,7 +1221,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	}
 
 
-	phR("listening ports")
 	if len(ports) == 0 {
 		addR(info + "  (none)" + RESET)
 	} else {
@@ -1260,7 +1242,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	}
 
 
-	phR("established connections")
 	conns := readEstablished()
 	external := 0
 	for _, c := range conns {
@@ -1289,7 +1270,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	}
 
 
-	phR("users & access")
 
 	totalU, loginU := countShellUsers()
 	addR(row(ok, "shell users", fmt.Sprintf("total:%d  with-login:%d", totalU, loginU)))
