@@ -620,711 +620,309 @@ func lynisScore() string {
 	return ""
 }
 
-func secSumKernel(t *Theme, h int) []ColLine {
-	var lines []ColLine
-	add := func(text string, c Color) { addLine(&lines, h, text, c, false, false) }
-	c := func(good bool) Color {
-		if good {
-			return t.DISK
-		}
-		return t.WARN
-	}
-	add("KERNEL", t.HDR)
-	aslr := readSysctl("kernel.randomize_va_space")
-	add(fmt.Sprintf("  ASLR          %s", aslrDesc(aslr)), c(aslr == "2"))
-	kptr := readSysctl("kernel.kptr_restrict")
-	add(fmt.Sprintf("  kptr          %s", kptrDesc(kptr)), c(kptr != "0"))
-	ptrace := readSysctl("kernel.yama.ptrace_scope")
-	add(fmt.Sprintf("  ptrace        %s", map[string]string{"0": "unrestricted", "1": "parent-only", "2": "admin-only", "3": "disabled", "?": "n/a"}[ptrace]), c(ptrace != "0"))
-	lockdown := checkKernelLockdown()
-	add(fmt.Sprintf("  lockdown      %s", lockdown), c(lockdown != "none" && lockdown != "n/a"))
-	moddis := readSysctl("kernel.modules_disabled")
-	add(fmt.Sprintf("  modules       %s", map[string]string{"0": "loadable", "1": "locked", "?": "n/a"}[moddis]), c(moddis == "1"))
-	taintVal, _ := readTaint()
-	add(fmt.Sprintf("  taint         %d", taintVal), c(taintVal == 0))
-	ipfwd := readSysctl("net.ipv4.ip_forward")
-	add(fmt.Sprintf("  ip_forward    %s", map[string]string{"0": "off", "1": "ON", "?": "?"}[ipfwd]), c(ipfwd != "1"))
-	return lines
-}
-
-func secSumRootkit(t *Theme, h int) []ColLine {
-	var lines []ColLine
-	add := func(text string, c Color) { addLine(&lines, h, text, c, false, false) }
-	c := func(good bool) Color {
-		if good {
-			return t.DISK
-		}
-		return t.WARN
-	}
-	add("ROOTKIT", t.HDR)
-	_, _, delta := hiddenProcDelta()
-	add(fmt.Sprintf("  hidden procs  Δ:%d", delta), c(delta <= 5))
-	pls := checkLdPreload()
-	add(fmt.Sprintf("  LD_PRELOAD    %d procs", len(pls)), c(len(pls) == 0))
-	kallNote := "hidden"
-	if checkKallsymsLeak() {
-		kallNote = "LEAKED"
-	}
-	add(fmt.Sprintf("  kallsyms      %s", kallNote), c(!checkKallsymsLeak()))
-	rawN := countRawSockets()
-	add(fmt.Sprintf("  raw sockets   %d", rawN), c(rawN <= 2))
-	unsig := readUnsignedModules()
-	add(fmt.Sprintf("  unsigned mods %d", len(unsig)), c(len(unsig) == 0))
-	suids := cachedCountSUID()
-	add(fmt.Sprintf("  SUID bins     %d", suids), c(suids <= 30))
-	gl := checkGlobalPreload()
-	add(fmt.Sprintf("  ld.so.preload %d entries", len(gl)), c(len(gl) == 0))
-	return lines
-}
-
-func secSumNetwork(t *Theme, h int) []ColLine {
-	var lines []ColLine
-	add := func(text string, c Color) { addLine(&lines, h, text, c, false, false) }
-	c := func(good bool) Color {
-		if good {
-			return t.DISK
-		}
-		return t.WARN
-	}
-	add("NETWORK", t.HDR)
-	syncook := readSysctl("net.ipv4.tcp_syncookies")
-	add(fmt.Sprintf("  syncookies    %s", map[string]string{"0": "off", "1": "on", "?": "?"}[syncook]), c(syncook == "1"))
-	redir := readSysctl("net.ipv4.conf.all.accept_redirects")
-	add(fmt.Sprintf("  icmp redirect %s", map[string]string{"0": "off", "1": "ON", "?": "?"}[redir]), c(redir == "0"))
-	srcr4 := readSysctl("net.ipv4.conf.all.accept_source_route")
-	add(fmt.Sprintf("  src route     %s", map[string]string{"0": "off", "1": "ON", "?": "?"}[srcr4]), c(srcr4 != "1"))
-	ts := readSysctl("net.ipv4.tcp_timestamps")
-	add(fmt.Sprintf("  timestamps    %s", map[string]string{"0": "off", "1": "on", "?": "?"}[ts]), c(ts == "0"))
-	conns := readEstablished()
-	ext := 0
-	for _, cn := range conns {
-		if !isPrivateIP(cn.Remote) {
-			ext++
-		}
-	}
-	add(fmt.Sprintf("  ext conns     %d", ext), c(ext == 0))
-	ports := readListenPorts()
-	add(fmt.Sprintf("  listen ports  %d", len(ports)), t.NET)
-	return lines
-}
-
-func secSumSandbox(vms VMStat, t *Theme, h int) []ColLine {
-	var lines []ColLine
-	add := func(text string, c Color) { addLine(&lines, h, text, c, false, false) }
-	c := func(good bool) Color {
-		if good {
-			return t.DISK
-		}
-		return t.WARN
-	}
-	add("SANDBOX", t.HDR)
-	add(fmt.Sprintf("  AppArmor      %s", map[bool]string{true: "active", false: "inactive"}[vms.AppArmor]), c(vms.AppArmor))
-	add(fmt.Sprintf("  SELinux       %s", map[bool]string{true: "enforcing", false: "inactive"}[vms.SELinux]), c(vms.SELinux))
-	fw := vms.Firewall
-	if fw == "" {
-		fw = "none"
-	}
-	add(fmt.Sprintf("  firewall      %s", fw), c(vms.Firewall != ""))
-	fjInst, fjRun := checkFirejail()
-	fjNote := fmt.Sprintf("sandboxes: %d", fjRun)
-	if !fjInst {
-		fjNote = "not installed"
-	}
-	add(fmt.Sprintf("  firejail      %s", fjNote), c(fjInst))
-	scN := countSeccompProcs()
-	add(fmt.Sprintf("  seccomp       %d procs", scN), c(scN > 0))
-	sshCfg := readSSHConfig()
-	rootLogin := sshCfg["permitrootlogin"]
-	rlNote := rootLogin
-	if rlNote == "" {
-		rlNote = "n/a"
-	}
-	add(fmt.Sprintf("  SSH root      %s", rlNote), c(rootLogin == "no" || rootLogin == ""))
-	return lines
-}
-
 func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Theme) {
-	topH := 9
-	if rows < 22 {
-		topH = 5
-	}
-
 	ss.mu.RLock()
 	vms := ss.VMs
 	ss.mu.RUnlock()
 
-	sumCols := [][]ColLine{
-		secSumKernel(t, topH),
-		secSumRootkit(t, topH),
-		secSumNetwork(t, topH),
-		secSumSandbox(vms, t, topH),
-	}
-	cw := cols / 4
-	widths := []int{cw, cw, cw, cols - cw*3}
-	renderCols(buf, 0, topH, sumCols, widths, t)
+	ok   := t.DISK
+	warn := t.WARN
+	inf  := t.USB
 
-	lw := cols/2 - 1
-	rw := cols - lw - 1
-
-	var lbuf, rbuf []string
-	addL := func(s string) { lbuf = append(lbuf, s) }
-	addR := func(s string) { rbuf = append(rbuf, s) }
-
-	ok   := ansiCol(t.DISK) + BOLD + "OK  " + RESET
-	warn := ansiCol(t.WARN) + BOLD + "WARN" + RESET
-	part := ansiCol(t.RAM)  + BOLD + "PART" + RESET
-	info := DIM + ansiCol(t.USB)
-	_ = part
-
-	boolOK := func(v string, good ...string) string {
-		for _, g := range good {
-			if v == g {
-				return ok
-			}
-		}
+	bc := func(good bool) Color {
+		if good { return ok }
 		return warn
 	}
 
-	row := func(st, label, val string) string {
-		return fmt.Sprintf("  %s %-20s %s%s%s", st, label, info, val, RESET)
+	lbl := func(label, val string, c Color) ColLine {
+		return ColLine{Text: fmt.Sprintf("  %-16s %s", label, val), C: c}
+	}
+	hdr := func(name string) ColLine {
+		return ColLine{Text: " " + name, C: t.HDR, Bold: true}
 	}
 
-	warnLine := func(s string) string {
-		return fmt.Sprintf("         %s! %s%s", ansiCol(t.WARN), s, RESET)
-	}
+	var lines []ColLine
+	add  := func(l ColLine)               { lines = append(lines, l) }
+	addl := func(label, val string, c Color) { add(lbl(label, val, c)) }
+	addh := func(name string)              { add(hdr(name)) }
 
-	// LEFT COLUMN
-
-
+	// kernel hardening
+	addh("kernel hardening")
 	aslr := readSysctl("kernel.randomize_va_space")
-	aslrSt := warn
-	if aslr == "2" {
-		aslrSt = ok
-	} else if aslr == "1" {
-		aslrSt = part
-	}
-	addL(row(aslrSt, "ASLR", aslrDesc(aslr)+" ("+aslr+")"))
-
+	addl("ASLR", aslrDesc(aslr)+" ("+aslr+")", bc(aslr == "2"))
 	kptr := readSysctl("kernel.kptr_restrict")
-	addL(row(boolOK(kptr, "1", "2"), "kptr_restrict", kptrDesc(kptr)+" ("+kptr+")"))
-
+	addl("kptr_restrict", kptrDesc(kptr)+" ("+kptr+")", bc(kptr != "0"))
 	dmesg := readSysctl("kernel.dmesg_restrict")
-	addL(row(boolOK(dmesg, "1"), "dmesg_restrict",
-		map[string]string{"0": "readable by all", "1": "root only", "?": "n/a"}[dmesg]+" ("+dmesg+")"))
-
+	addl("dmesg_restrict", map[string]string{"0":"all users","1":"root only","?":"n/a"}[dmesg]+" ("+dmesg+")", bc(dmesg == "1"))
 	perf := readSysctl("kernel.perf_event_paranoid")
-	perfSt := ok
-	if perf == "-1" || perf == "0" {
-		perfSt = warn
-	}
-	addL(row(perfSt, "perf_paranoid", "level "+perf))
-
+	addl("perf_paranoid", "level "+perf, bc(perf != "-1" && perf != "0"))
 	ptrace := readSysctl("kernel.yama.ptrace_scope")
-	addL(row(boolOK(ptrace, "1", "2", "3"), "ptrace_scope",
-		map[string]string{"0": "unrestricted", "1": "parent only", "2": "admin only", "3": "disabled", "?": "Yama n/a"}[ptrace]+" ("+ptrace+")"))
-
+	addl("ptrace_scope", map[string]string{"0":"unrestricted","1":"parent-only","2":"admin-only","3":"disabled","?":"n/a"}[ptrace]+" ("+ptrace+")", bc(ptrace != "0"))
 	suidD := readSysctl("fs.suid_dumpable")
-	addL(row(boolOK(suidD, "0"), "suid_dumpable",
-		map[string]string{"0": "disabled", "1": "enabled", "2": "suidsafe", "?": "?"}[suidD]+" ("+suidD+")"))
-
+	addl("suid_dumpable", map[string]string{"0":"disabled","1":"enabled","2":"suidsafe","?":"?"}[suidD]+" ("+suidD+")", bc(suidD == "0"))
 	bpf := readSysctl("kernel.unprivileged_bpf_disabled")
-	addL(row(boolOK(bpf, "1", "2"), "unpriv_bpf",
-		map[string]string{"0": "allowed", "1": "disabled", "2": "admin only", "?": "n/a"}[bpf]+" ("+bpf+")"))
-
+	addl("unpriv_bpf", map[string]string{"0":"allowed","1":"disabled","2":"admin","?":"n/a"}[bpf]+" ("+bpf+")", bc(bpf == "1" || bpf == "2"))
 	userns := readSysctl("kernel.unprivileged_userns_clone")
-	usernsGood := userns == "0" || userns == "?"
-	usernsLabel := map[string]string{"0": "disabled", "1": "allowed", "?": "n/a"}[userns]
-	usernsX := ok
-	if !usernsGood {
-		usernsX = warn
-	}
-	addL(row(usernsX, "unpriv_userns", usernsLabel+" ("+userns+")"))
-
+	addl("unpriv_userns", map[string]string{"0":"disabled","1":"allowed","?":"n/a"}[userns]+" ("+userns+")", bc(userns == "0" || userns == "?"))
 	kexec := readSysctl("kernel.kexec_load_disabled")
-	addL(row(boolOK(kexec, "1"), "kexec_disabled",
-		map[string]string{"0": "kexec allowed", "1": "kexec disabled", "?": "n/a"}[kexec]+" ("+kexec+")"))
-
-	symlinks := readSysctl("fs.protected_symlinks")
-	hardlinks := readSysctl("fs.protected_hardlinks")
-	addL(row(boolOK(symlinks, "1"), "protected_symlinks", map[string]string{"0": "off", "1": "on", "?": "?"}[symlinks]))
-	addL(row(boolOK(hardlinks, "1"), "protected_hardlinks", map[string]string{"0": "off", "1": "on", "?": "?"}[hardlinks]))
-
+	addl("kexec_disabled", map[string]string{"0":"allowed","1":"locked","?":"n/a"}[kexec]+" ("+kexec+")", bc(kexec == "1"))
+	addl("protected_symlinks", map[string]string{"0":"off","1":"on","?":"?"}[readSysctl("fs.protected_symlinks")], bc(readSysctl("fs.protected_symlinks") == "1"))
+	addl("protected_hardlinks", map[string]string{"0":"off","1":"on","?":"?"}[readSysctl("fs.protected_hardlinks")], bc(readSysctl("fs.protected_hardlinks") == "1"))
 	ipfwd := readSysctl("net.ipv4.ip_forward")
-	ipfwdSt := ok
-	if ipfwd == "1" {
-		ipfwdSt = warn
-	}
-	addL(row(ipfwdSt, "ip_forward",
-		map[string]string{"0": "off", "1": "ON — routing enabled", "?": "?"}[ipfwd]))
-
+	addl("ip_forward", map[string]string{"0":"off","1":"ON — routing","?":"?"}[ipfwd], bc(ipfwd != "1"))
 	moddis := readSysctl("kernel.modules_disabled")
-	addL(row(boolOK(moddis, "1"), "modules_disabled",
-		map[string]string{"0": "modules loadable", "1": "locked", "?": "n/a"}[moddis]+" ("+moddis+")"))
-
+	addl("modules_disabled", map[string]string{"0":"loadable","1":"locked","?":"n/a"}[moddis]+" ("+moddis+")", bc(moddis == "1"))
 	lockdown := checkKernelLockdown()
-	ldSt := ok
-	if lockdown == "none" || lockdown == "n/a" {
-		ldSt = warn
-	}
-	addL(row(ldSt, "kernel lockdown", lockdown))
+	addl("lockdown", lockdown, bc(lockdown != "none" && lockdown != "n/a"))
 
-
+	// kernel taint
+	addh("kernel taint")
 	taintVal, taintMsgs := readTaint()
 	if taintVal == 0 {
-		addL(row(ok, "tainted", "0 — clean"))
+		addl("tainted", "0 — clean", ok)
 	} else {
-		addL(row(warn, "tainted", fmt.Sprintf("%d", taintVal)))
+		addl("tainted", fmt.Sprintf("%d", taintVal), warn)
 		for _, msg := range taintMsgs {
-			addL(warnLine(msg))
+			add(ColLine{Text: "   ! " + msg, C: warn})
 		}
 	}
 
-
-
+	// rootkit
+	addh("rootkit")
 	procN, lavgN, delta := hiddenProcDelta()
-	hdSt := ok
-	hdNote := fmt.Sprintf("/proc:%d  lavg:%d  Δ:%d", procN, lavgN, delta)
-	if delta > 5 {
-		hdSt = warn
-		hdNote += " — HIDDEN"
-	}
-	addL(row(hdSt, "hidden procs", hdNote))
-
-	preloads := checkLdPreload()
-	plSt := ok
-	if len(preloads) > 0 {
-		plSt = warn
-	}
-	addL(row(plSt, "LD_PRELOAD inject", fmt.Sprintf("%d processes", len(preloads))))
-	for _, p := range preloads {
-		addL(warnLine(p))
-	}
-
-	kallLeak := checkKallsymsLeak()
-	kallSt := ok
+	addl("hidden procs", fmt.Sprintf("/proc:%d lavg:%d Δ:%d", procN, lavgN, delta), bc(delta <= 5))
+	pls := checkLdPreload()
+	addl("LD_PRELOAD", fmt.Sprintf("%d procs", len(pls)), bc(len(pls) == 0))
+	for _, p := range pls { add(ColLine{Text: "   → " + p, C: warn}) }
 	kallNote := "addresses hidden"
-	if kallLeak {
-		kallSt = warn
-		kallNote = "real addrs visible!"
-	}
-	addL(row(kallSt, "kallsyms leak", kallNote))
-
+	if checkKallsymsLeak() { kallNote = "real addrs visible!" }
+	addl("kallsyms", kallNote, bc(!checkKallsymsLeak()))
 	rawN := countRawSockets()
-	rawSt := ok
-	rawNote := fmt.Sprintf("%d sockets", rawN)
-	if rawN > 2 {
-		rawSt = warn
-		rawNote += " — check sniffers"
-	}
-	addL(row(rawSt, "raw sockets", rawNote))
-
-	unsignedMods := readUnsignedModules()
-	modSt := ok
-	if len(unsignedMods) > 0 {
-		modSt = warn
-	}
-	addL(row(modSt, "unsigned modules", fmt.Sprintf("%d OOT/unsigned", len(unsignedMods))))
-	for _, m := range unsignedMods {
-		addL(warnLine(m))
-	}
-
+	addl("raw sockets", fmt.Sprintf("%d", rawN), bc(rawN <= 2))
+	unsig := readUnsignedModules()
+	addl("unsigned modules", fmt.Sprintf("%d OOT/unsigned", len(unsig)), bc(len(unsig) == 0))
+	for _, m := range unsig { add(ColLine{Text: "   ! " + m, C: warn}) }
 	suids := cachedCountSUID()
-	suidSt := ok
-	suidNote := fmt.Sprintf("%d binaries", suids)
-	if suids > 30 {
-		suidSt = warn
-		suidNote += " — high"
-	}
-	addL(row(suidSt, "SUID", suidNote))
-
+	addl("SUID", fmt.Sprintf("%d bins", suids), bc(suids <= 30))
 	sgids := cachedCountSGID()
-	sgidSt := ok
-	sgidNote := fmt.Sprintf("%d binaries", sgids)
-	if sgids > 20 {
-		sgidSt = warn
-		sgidNote += " — high"
-	}
-	addL(row(sgidSt, "SGID", sgidNote))
-
-	globalPre := checkGlobalPreload()
-	glSt := ok
-	glNote := "clean"
-	if len(globalPre) > 0 {
-		glSt = warn
-		glNote = fmt.Sprintf("%d entries!", len(globalPre))
-	}
-	addL(row(glSt, "ld.so.preload", glNote))
-	for _, p := range globalPre {
-		addL(warnLine(p))
-	}
-
+	addl("SGID", fmt.Sprintf("%d bins", sgids), bc(sgids <= 20))
+	gl := checkGlobalPreload()
+	addl("ld.so.preload", fmt.Sprintf("%d entries", len(gl)), bc(len(gl) == 0))
+	for _, p := range gl { add(ColLine{Text: "   ! " + p, C: warn}) }
 	corePiped, corePattern := checkCorePatternPipe()
-	cpSt := ok
-	if corePiped {
-		cpSt = warn
-	}
-	addL(row(cpSt, "core_pattern", corePattern))
+	addl("core_pattern", corePattern, bc(!corePiped))
+	addl("/tmp sticky", map[bool]string{true:"set",false:"MISSING"}[checkTmpSticky()], bc(checkTmpSticky()))
+	addl("IMA", map[bool]string{true:"policy active",false:"inactive"}[checkIMA()], bc(checkIMA()))
 
-	tmpSt := ok
-	tmpNote := "sticky bit set"
-	if !checkTmpSticky() {
-		tmpSt = warn
-		tmpNote = "no sticky bit!"
-	}
-	addL(row(tmpSt, "/tmp sticky", tmpNote))
-
-	imaSt := ok
-	imaNote := "IMA inactive"
-	if checkIMA() {
-		imaNote = "IMA policy active"
-	} else {
-		imaSt = warn
-	}
-	addL(row(imaSt, "IMA", imaNote))
-
-
-
+	// filesystem
+	addh("filesystem")
 	wwCount := cachedWWEtc()
-	wwSt := ok
-	wwNote := "none"
-	if wwCount > 0 {
-		wwSt = warn
-		wwNote = fmt.Sprintf("%d world-writable files!", wwCount)
-	}
-	addL(row(wwSt, "world-writable /etc", wwNote))
+	addl("world-writable /etc", fmt.Sprintf("%d files", wwCount), bc(wwCount == 0))
+	addl("/etc/shadow", checkFilePerms("/etc/shadow"), bc(checkFilePerms("/etc/shadow") == "640" || checkFilePerms("/etc/shadow") == "000" || checkFilePerms("/etc/shadow") == "000"))
+	addl("/etc/passwd", checkFilePerms("/etc/passwd"), bc(checkFilePerms("/etc/passwd") == "644"))
+	addl("sudoers NOPASSWD", map[bool]string{true:"FOUND",false:"clean"}[checkSudoersNopasswd()], bc(!checkSudoersNopasswd()))
 
-	shadowPerms := checkFilePerms("/etc/shadow")
-	shadowSt := ok
-	if shadowPerms != "0640" && shadowPerms != "0000" && shadowPerms != "n/a" {
-		shadowSt = warn
-	}
-	addL(row(shadowSt, "/etc/shadow perms", shadowPerms))
-
-	passwdPerms := checkFilePerms("/etc/passwd")
-	passwdSt := ok
-	if passwdPerms != "0644" && passwdPerms != "n/a" {
-		passwdSt = warn
-	}
-	addL(row(passwdSt, "/etc/passwd perms", passwdPerms))
-
-	nopasswd := checkSudoersNopasswd()
-	nopasswdSt := ok
-	nopasswdNote := "not found"
-	if nopasswd {
-		nopasswdSt = warn
-		nopasswdNote = "NOPASSWD found!"
-	}
-	addL(row(nopasswdSt, "sudoers NOPASSWD", nopasswdNote))
-
-	// RIGHT COLUMN
-
-
-	aaSt := warn
-	if vms.AppArmor {
-		aaSt = ok
-	}
-	addR(row(aaSt, "AppArmor", map[bool]string{true: "active", false: "inactive"}[vms.AppArmor]))
-
-	seSt := warn
-	if vms.SELinux {
-		seSt = ok
-	}
-	addR(row(seSt, "SELinux", map[bool]string{true: "enforcing", false: "inactive"}[vms.SELinux]))
-
-	fwSt := warn
-	fw := vms.Firewall
-	if fw == "" {
-		fw = "none detected"
-	} else {
-		fwSt = ok
-	}
-	addR(row(fwSt, "Firewall", fw))
-
+	// firewall & sandbox
+	addh("firewall & sandbox")
+	addl("AppArmor", map[bool]string{true:"active",false:"inactive"}[vms.AppArmor], bc(vms.AppArmor))
+	addl("SELinux", map[bool]string{true:"enforcing",false:"inactive"}[vms.SELinux], bc(vms.SELinux))
+	fw := vms.Firewall; if fw == "" { fw = "none detected" }
+	addl("firewall", fw, bc(vms.Firewall != ""))
 	fjInst, fjRun := checkFirejail()
-	fjSt := warn
-	fjNote := "not installed"
-	if fjInst {
-		fjSt = ok
-		fjNote = fmt.Sprintf("installed  sandboxes: %d", fjRun)
-	}
-	addR(row(fjSt, "Firejail", fjNote))
-
-	seccompN := countSeccompProcs()
-	secSt := ok
-	secNote := fmt.Sprintf("%d procs with seccomp filter", seccompN)
-	if seccompN == 0 {
-		secSt = warn
-		secNote = "0 — no seccomp sandboxing"
-	}
-	addR(row(secSt, "seccomp (filter)", secNote))
-
+	fjNote := fmt.Sprintf("installed  sandboxes:%d", fjRun)
+	if !fjInst { fjNote = "not installed" }
+	addl("firejail", fjNote, bc(fjInst))
+	scN := countSeccompProcs()
+	addl("seccomp (filter)", fmt.Sprintf("%d procs", scN), bc(scN > 0))
 	swapEnc := "?"
 	if raw, err := os.ReadFile("/proc/swaps"); err == nil {
 		if strings.Contains(string(raw), "dm-") || strings.Contains(string(raw), "zram") {
 			swapEnc = "zram/encrypted"
 		} else if strings.Count(string(raw), "\n") > 1 {
-			swapEnc = "plain — unencrypted"
+			swapEnc = "plain"
 		} else {
 			swapEnc = "none"
 		}
 	}
-	swapSt := ok
-	if swapEnc == "plain — unencrypted" {
-		swapSt = warn
-	}
-	addR(row(swapSt, "swap", swapEnc))
+	addl("swap", swapEnc, bc(swapEnc != "plain"))
 
-
-
+	// network security
+	addh("network security")
 	syncook := readSysctl("net.ipv4.tcp_syncookies")
-	addR(row(boolOK(syncook, "1"), "tcp_syncookies",
-		map[string]string{"0": "disabled", "1": "SYN flood protection", "?": "?"}[syncook]))
-
+	addl("tcp_syncookies", map[string]string{"0":"disabled","1":"SYN protection","?":"?"}[syncook], bc(syncook == "1"))
 	rpfall := readSysctl("net.ipv4.conf.all.rp_filter")
-	addR(row(boolOK(rpfall, "1"), "rp_filter",
-		map[string]string{"0": "disabled", "1": "strict", "2": "loose", "?": "?"}[rpfall]))
-
+	addl("rp_filter", map[string]string{"0":"disabled","1":"strict","2":"loose","?":"?"}[rpfall], bc(rpfall == "1"))
 	redir := readSysctl("net.ipv4.conf.all.accept_redirects")
-	addR(row(boolOK(redir, "0"), "accept_redirects",
-		map[string]string{"0": "disabled (safe)", "1": "enabled — MITM risk", "?": "?"}[redir]))
-
+	addl("accept_redirects", map[string]string{"0":"disabled","1":"enabled","?":"?"}[redir], bc(redir == "0"))
 	martians := readSysctl("net.ipv4.conf.all.log_martians")
-	addR(row(boolOK(martians, "1"), "log_martians",
-		map[string]string{"0": "disabled", "1": "enabled", "?": "?"}[martians]))
-
+	addl("log_martians", map[string]string{"0":"disabled","1":"enabled","?":"?"}[martians], bc(martians == "1"))
 	ts := readSysctl("net.ipv4.tcp_timestamps")
-	addR(row(boolOK(ts, "0"), "tcp_timestamps",
-		map[string]string{"0": "disabled (safe)", "1": "leaks uptime info", "?": "?"}[ts]))
-
+	addl("tcp_timestamps", map[string]string{"0":"disabled","1":"leaks uptime","?":"?"}[ts], bc(ts == "0"))
 	bpfjit := readSysctl("net.core.bpf_jit_harden")
-	addR(row(boolOK(bpfjit, "1", "2"), "bpf_jit_harden",
-		map[string]string{"0": "disabled", "1": "unprivileged", "2": "all", "?": "?"}[bpfjit]))
-
+	addl("bpf_jit_harden", map[string]string{"0":"disabled","1":"unprivileged","2":"all","?":"?"}[bpfjit], bc(bpfjit == "1" || bpfjit == "2"))
 	sysrq := readSysctl("kernel.sysrq")
-	sysrqSt := ok
-	if sysrq == "1" {
-		sysrqSt = warn
-	}
-	addR(row(sysrqSt, "sysrq",
-		map[string]string{"0": "disabled", "1": "all keys — dangerous", "176": "safe subset", "?": "?"}[sysrq]))
+	addl("sysrq", map[string]string{"0":"disabled","1":"all keys","176":"safe subset","?":"?"}[sysrq], bc(sysrq != "1"))
 
-
-
-	srcRoute4 := readSysctl("net.ipv4.conf.all.accept_source_route")
-	addR(row(boolOK(srcRoute4, "0"), "source_route ipv4",
-		map[string]string{"0": "blocked (safe)", "1": "ENABLED — spoofing risk", "?": "?"}[srcRoute4]))
-
-	srcRoute6 := readSysctl("net.ipv6.conf.all.accept_source_route")
-	addR(row(boolOK(srcRoute6, "0", "-1"), "source_route ipv6",
-		map[string]string{"0": "blocked", "-1": "blocked", "1": "ENABLED — spoofing", "?": "?"}[srcRoute6]))
-
+	// network vulnerabilities
+	addh("network vulnerabilities")
+	srcr4 := readSysctl("net.ipv4.conf.all.accept_source_route")
+	addl("source_route ipv4", map[string]string{"0":"blocked","1":"ENABLED","?":"?"}[srcr4], bc(srcr4 != "1"))
+	srcr6 := readSysctl("net.ipv6.conf.all.accept_source_route")
+	addl("source_route ipv6", map[string]string{"0":"blocked","-1":"blocked","1":"ENABLED","?":"?"}[srcr6], bc(srcr6 != "1"))
 	sendRedir := readSysctl("net.ipv4.conf.all.send_redirects")
-	addR(row(boolOK(sendRedir, "0"), "send_redirects",
-		map[string]string{"0": "disabled (safe)", "1": "ENABLED — MITM vector", "?": "?"}[sendRedir]))
-
+	addl("send_redirects", map[string]string{"0":"disabled","1":"ENABLED","?":"?"}[sendRedir], bc(sendRedir == "0"))
 	bogus := readSysctl("net.ipv4.icmp_ignore_bogus_error_responses")
-	addR(row(boolOK(bogus, "1"), "icmp_bogus_ignore",
-		map[string]string{"0": "log bogus errors", "1": "ignored (safe)", "?": "?"}[bogus]))
-
+	addl("icmp_bogus_ignore", map[string]string{"0":"logging","1":"ignored","?":"?"}[bogus], bc(bogus == "1"))
 	rfc1337 := readSysctl("net.ipv4.tcp_rfc1337")
-	addR(row(boolOK(rfc1337, "1"), "tcp_rfc1337",
-		map[string]string{"0": "TIME_WAIT vuln open", "1": "protected", "?": "?"}[rfc1337]))
-
+	addl("tcp_rfc1337", map[string]string{"0":"vuln open","1":"protected","?":"?"}[rfc1337], bc(rfc1337 == "1"))
 	tempaddr := readSysctl("net.ipv6.conf.all.use_tempaddr")
-	addR(row(boolOK(tempaddr, "2"), "ipv6 privacy",
-		map[string]string{"0": "disabled", "1": "temporary addr", "2": "prefer temp (safe)", "?": "?"}[tempaddr]))
-
+	addl("ipv6 privacy", map[string]string{"0":"disabled","1":"temp addr","2":"prefer temp","?":"?"}[tempaddr], bc(tempaddr == "2"))
 	redir6 := readSysctl("net.ipv6.conf.all.accept_redirects")
-	addR(row(boolOK(redir6, "0"), "ipv6 redirects",
-		map[string]string{"0": "disabled (safe)", "1": "ENABLED — MITM risk", "?": "?"}[redir6]))
-
-	icmpRatelimit := readSysctl("net.ipv4.icmp_ratelimit")
-	icmpRSt := ok
-	if icmpRatelimit == "0" {
-		icmpRSt = warn
-	}
-	addR(row(icmpRSt, "icmp_ratelimit", icmpRatelimit+" ms (0=unlimited)"))
-
+	addl("ipv6 redirects", map[string]string{"0":"disabled","1":"ENABLED","?":"?"}[redir6], bc(redir6 == "0"))
+	icmpRL := readSysctl("net.ipv4.icmp_ratelimit")
+	addl("icmp_ratelimit", icmpRL+" ms", bc(icmpRL != "0"))
 	ports := readListenPorts()
-
-	if checkPortOpen(ports, 53) {
-		addR(row(warn, "DNS port 53", "LISTENING — open resolver risk"))
-	} else {
-		addR(row(ok, "DNS port 53", "not listening"))
-	}
-
-	if checkPortOpen(ports, 25) || checkPortOpen(ports, 587) {
-		addR(row(warn, "SMTP 25/587", "LISTENING — open relay check"))
-	} else {
-		addR(row(ok, "SMTP 25/587", "not listening"))
-	}
-
+	addl("DNS port 53", map[bool]string{true:"LISTENING",false:"closed"}[checkPortOpen(ports, 53)], bc(!checkPortOpen(ports, 53)))
+	addl("SMTP 25/587", map[bool]string{true:"LISTENING",false:"closed"}[checkPortOpen(ports, 25) || checkPortOpen(ports, 587)], bc(!checkPortOpen(ports, 25) && !checkPortOpen(ports, 587)))
 	udpN := countUDPListen()
-	udpSt := ok
-	if udpN > 10 {
-		udpSt = warn
-	}
-	addR(row(udpSt, "UDP sockets", fmt.Sprintf("%d active", udpN)))
+	addl("UDP sockets", fmt.Sprintf("%d active", udpN), bc(udpN <= 10))
 
-
+	// SSH hardening
+	addh("SSH hardening")
 	if _, err := os.Stat("/etc/ssh/sshd_config"); err != nil {
-		addR(info + "  sshd not found" + RESET)
+		add(ColLine{Text: "  sshd not found", C: inf, Dim: true})
 	} else {
 		sshCfg := readSSHConfig()
-		sshCheck := func(key, goodVal, label string) {
-			v, ok2 := sshCfg[strings.ToLower(key)]
-			if !ok2 {
-				addR(row(ok, label, "n/a (default)"))
-				return
-			}
-			st := ok
-			if strings.ToLower(v) != goodVal {
-				st = warn
-			}
-			addR(row(st, label, v))
+		sshChk := func(key, goodVal, label string) {
+			v, exists := sshCfg[strings.ToLower(key)]
+			if !exists { addl(label, "n/a (default)", ok); return }
+			addl(label, v, bc(strings.ToLower(v) == goodVal))
 		}
-		sshCheck("PermitRootLogin", "no", "PermitRootLogin")
-		sshCheck("PasswordAuthentication", "no", "PasswordAuth")
-		sshCheck("X11Forwarding", "no", "X11Forwarding")
-		sshCheck("PermitEmptyPasswords", "no", "PermitEmptyPwd")
-		sshCheck("Protocol", "2", "Protocol")
-
+		sshChk("PermitRootLogin", "no", "PermitRootLogin")
+		sshChk("PasswordAuthentication", "no", "PasswordAuth")
+		sshChk("X11Forwarding", "no", "X11Forwarding")
+		sshChk("PermitEmptyPasswords", "no", "PermitEmptyPwd")
+		sshChk("Protocol", "2", "Protocol")
 		if v, exists := sshCfg["maxauthtries"]; exists {
-			n, err := strconv.Atoi(v)
-			st := ok
-			if err != nil || n > 4 {
-				st = warn
-			}
-			addR(row(st, "MaxAuthTries", v))
+			n, err2 := strconv.Atoi(v)
+			addl("MaxAuthTries", v, bc(err2 == nil && n <= 4))
 		} else {
-			addR(row(ok, "MaxAuthTries", "n/a (default)"))
+			addl("MaxAuthTries", "n/a (default)", ok)
 		}
 	}
 
-
+	// security tools
+	addh("security tools")
 	secTools := checkSecTools()
-	toolOrder := []string{"lynis", "rkhunter", "chkrootkit", "aide", "clamscan", "debsums", "tiger"}
-	for _, tool := range toolOrder {
+	for _, tool := range []string{"lynis", "rkhunter", "chkrootkit", "aide", "clamscan", "debsums", "tiger"} {
 		inst := secTools[tool]
-		st := ok
 		note := "installed"
-		if !inst {
-			st = warn
-			note = "not found"
-		}
+		if !inst { note = "not found" }
 		if tool == "lynis" && inst {
-			if score := lynisScore(); score != "" {
-				note = "installed  score: " + score
-			}
+			if score := lynisScore(); score != "" { note = "installed  score:" + score }
 		}
-		addR(row(st, tool, note))
+		addl(tool, note, bc(inst))
 	}
 
-
+	// listening ports
+	addh("listening ports")
 	if len(ports) == 0 {
-		addR(info + "  (none)" + RESET)
+		add(ColLine{Text: "  none", C: inf, Dim: true})
 	} else {
-		line := "  "
-		for i, p := range ports {
-			if i > 0 {
-				line += "  "
-			}
-			entry := fmt.Sprintf("%s%s:%d%s", ansiCol(t.NET), p.Proto, p.Port, RESET)
-			if visualLen(line+entry) > rw-2 {
-				addR(line)
-				line = "  "
+		line := " "
+		for _, p := range ports {
+			entry := fmt.Sprintf(" %s:%d", p.Proto, p.Port)
+			if len([]rune(line+entry)) > 36 {
+				add(ColLine{Text: line, C: t.NET})
+				line = " "
 			}
 			line += entry
 		}
-		if line != "  " {
-			addR(line)
-		}
+		if line != " " { add(ColLine{Text: line, C: t.NET}) }
 	}
 
-
+	// established connections
+	addh("connections")
 	conns := readEstablished()
-	external := 0
-	for _, c := range conns {
-		if !isPrivateIP(c.Remote) {
-			external++
-		}
-	}
-	extSt := ok
-	if external > 0 {
-		extSt = warn
-	}
-	addR(row(extSt, "connections", fmt.Sprintf("total:%d  external:%d", len(conns), external)))
+	ext := 0
+	for _, c := range conns { if !isPrivateIP(c.Remote) { ext++ } }
+	addl("established", fmt.Sprintf("total:%d  external:%d", len(conns), ext), bc(ext == 0))
 	if !ui.Anon {
 		shown := 0
 		for _, c := range conns {
-			if isPrivateIP(c.Remote) {
-				continue
-			}
-			if shown >= 8 {
-				addR(warnLine(fmt.Sprintf("... and %d more", external-shown)))
-				break
-			}
-			addR(warnLine("→ " + c.Remote))
+			if isPrivateIP(c.Remote) { continue }
+			if shown >= 6 { add(ColLine{Text: fmt.Sprintf("   ... +%d more", ext-shown), C: warn}); break }
+			add(ColLine{Text: "   → " + c.Remote, C: warn})
 			shown++
 		}
 	}
 
-
-
+	// users & access
+	addh("users & access")
 	totalU, loginU := countShellUsers()
-	addR(row(ok, "shell users", fmt.Sprintf("total:%d  with-login:%d", totalU, loginU)))
-
+	addl("shell users", fmt.Sprintf("total:%d  login:%d", totalU, loginU), inf)
 	sshKeys := checkSSHAuthKeys()
-	sshSt := ok
 	sshNote := "none"
-	if len(sshKeys) > 0 {
-		sshNote = strings.Join(sshKeys, " ")
-	}
-	addR(row(sshSt, "authorized_keys", sshNote))
-
+	if len(sshKeys) > 0 { sshNote = strings.Join(sshKeys, " ") }
+	addl("authorized_keys", sshNote, inf)
 	if ui.Anon {
-		addR(row(ok, "logged in", info+"[ANON]"+RESET))
+		addl("logged in", "[ANON]", inf)
 	} else {
 		users := readLoggedUsers()
 		if len(users) == 0 {
-			addR(row(ok, "logged in", "(none)"))
+			addl("logged in", "none", inf)
 		} else {
-			addR(row(ok, "logged in", fmt.Sprintf("%d sessions", len(users))))
-			for _, u := range users {
-				addR("    " + u)
+			addl("logged in", fmt.Sprintf("%d sessions", len(users)), inf)
+			for _, u := range users { add(ColLine{Text: "   " + u, C: inf}) }
+		}
+	}
+
+	// dynamic column count
+	nCols := 1
+	if cols >= 140 { nCols = 3 } else if cols >= 80 { nCols = 2 }
+
+	// split lines into nCols columns (balanced)
+	total := len(lines)
+	perCol := (total + nCols - 1) / nCols
+	colData := make([][]ColLine, nCols)
+	for i := 0; i < nCols; i++ {
+		start := i * perCol
+		end := start + perCol
+		if end > total { end = total }
+		if start < total { colData[i] = lines[start:end] }
+	}
+
+	colW := cols / nCols
+	widths := make([]int, nCols)
+	for i := range widths { widths[i] = colW }
+	widths[nCols-1] = cols - colW*(nCols-1)
+
+	// render — no dividers
+	displayRows := rows - 2
+	maxScroll := max(0, perCol-displayRows)
+	if ui.SecScroll > maxScroll { ui.SecScroll = maxScroll }
+
+	for row := 0; row < displayRows; row++ {
+		buf.WriteString(pos(row, 0))
+		for ci, col := range colData {
+			w := widths[ci]
+			idx := ui.SecScroll + row
+			var attr, text string
+			if idx < len(col) {
+				l := col[idx]
+				runes := []rune(l.Text)
+				if len(runes) > w { runes = runes[:w] }
+				text = string(runes) + strings.Repeat(" ", max(0, w-len(runes)))
+				attr = ansiCol(l.C)
+				if l.Bold { attr = BOLD + attr }
+				if l.Dim  { attr = DIM  + attr }
+			} else {
+				text = strings.Repeat(" ", w)
 			}
+			buf.WriteString(attr + text + RESET)
 		}
-	}
-
-	displayRows := rows - topH - 2
-	total := max(len(lbuf), len(rbuf))
-	maxScroll := max(0, total-displayRows)
-	if ui.SecScroll > maxScroll {
-		ui.SecScroll = maxScroll
-	}
-
-	div := ansiCol(t.HDR) + DIM + "│" + RESET
-	renderRow := topH + 1
-	for i := ui.SecScroll; i < total && renderRow < rows-1; i++ {
-		buf.WriteString(pos(renderRow, 0))
-		ls := ""
-		if i < len(lbuf) {
-			ls = lbuf[i]
-		}
-		rs := ""
-		if i < len(rbuf) {
-			rs = rbuf[i]
-		}
-		buf.WriteString(padRight(ls, lw))
-		buf.WriteString(div)
-		buf.WriteString(clampVisual(rs, rw))
 		buf.WriteString(CLEOL)
-		renderRow++
 	}
-	for ; renderRow < rows-1; renderRow++ {
-		buf.WriteString(pos(renderRow, 0) + CLEOL)
-	}
-	_ = topH
 
 	drawStatusBar(buf, rows, cols, ui, ui.Interval, ss, t)
 }
