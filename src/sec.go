@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -16,12 +17,12 @@ func readSysctl(key string) string {
 	return strings.TrimSpace(string(v))
 }
 
-// visualLen counts visible characters, skipping ANSI escape sequences
 func visualLen(s string) int {
 	n := 0
 	i := 0
 	for i < len(s) {
-		if s[i] == '\033' {
+		b := s[i]
+		if b == '\033' {
 			j := i + 1
 			if j < len(s) && s[j] == '[' {
 				j++
@@ -33,6 +34,8 @@ func visualLen(s string) int {
 				}
 			}
 			i = j
+		} else if b >= 0x80 && b < 0xC0 {
+			i++
 		} else {
 			n++
 			i++
@@ -48,8 +51,6 @@ func padRight(s string, w int) string {
 	}
 	return s + strings.Repeat(" ", w-vl)
 }
-
-// ── listen ports ─────────────────────────────────────────────────────────────
 
 type secListenPort struct {
 	Proto string
@@ -94,8 +95,6 @@ func readListenPorts() []secListenPort {
 	}
 	return out
 }
-
-// ── users ─────────────────────────────────────────────────────────────────────
 
 func readLoggedUsers() []string {
 	out := runCmd(2000000000, "who")
@@ -154,8 +153,6 @@ func checkSSHAuthKeys() []string {
 	}
 	return found
 }
-
-// ── rootkit helpers ───────────────────────────────────────────────────────────
 
 func countProcPIDs() int {
 	entries, err := os.ReadDir("/proc")
@@ -358,8 +355,6 @@ func checkTmpSticky() bool {
 	return info.Mode()&01000 != 0
 }
 
-// ── network helpers ───────────────────────────────────────────────────────────
-
 type netConn struct {
 	Local  string
 	Remote string
@@ -434,8 +429,6 @@ func countUDPListen() int {
 	}
 	return n
 }
-
-// ── new helpers ───────────────────────────────────────────────────────────────
 
 func checkFirejail() (installed bool, running int) {
 	for _, p := range []string{"/usr/bin/firejail", "/usr/local/bin/firejail"} {
@@ -512,7 +505,99 @@ func checkPortOpen(ports []secListenPort, port int) bool {
 	return false
 }
 
-// ── draw ──────────────────────────────────────────────────────────────────────
+func readSSHConfig() map[string]string {
+	out := map[string]string{}
+	raw, err := os.ReadFile("/etc/ssh/sshd_config")
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) >= 2 {
+			out[strings.ToLower(f[0])] = f[1]
+		}
+	}
+	return out
+}
+
+func checkWorldWritableEtc() int {
+	out := runCmd(5000000000, "find", "/etc", "-maxdepth", "3", "-perm", "-002", "-type", "f")
+	n := 0
+	for _, l := range strings.Split(out, "\n") {
+		if l != "" {
+			n++
+		}
+	}
+	return n
+}
+
+func checkFilePerms(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "n/a"
+	}
+	return fmt.Sprintf("%04o", info.Mode().Perm())
+}
+
+func checkSudoersNopasswd() bool {
+	check := func(path string) bool {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return false
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			if strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.Contains(line, "NOPASSWD") {
+				return true
+			}
+		}
+		return false
+	}
+	if check("/etc/sudoers") {
+		return true
+	}
+	entries, err := os.ReadDir("/etc/sudoers.d")
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if check("/etc/sudoers.d/" + e.Name()) {
+			return true
+		}
+	}
+	return false
+}
+
+func checkSecTools() map[string]bool {
+	tools := []string{"lynis", "rkhunter", "chkrootkit", "aide", "clamscan", "debsums", "tiger"}
+	out := map[string]bool{}
+	for _, t := range tools {
+		_, err := exec.LookPath(t)
+		out[t] = err == nil
+	}
+	return out
+}
+
+func lynisScore() string {
+	for _, path := range []string{"/var/log/lynis-report.dat", "/var/log/lynis/lynis-report.dat"} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			if strings.HasPrefix(line, "hardening_index=") {
+				return strings.TrimPrefix(line, "hardening_index=")
+			}
+		}
+	}
+	return ""
+}
 
 func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Theme) {
 	hdr := clampStr(" SEC"+strings.Repeat("─", max(0, cols-4)), cols)
@@ -533,7 +618,7 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	_ = part
 
 	ph := func(label string, w int) string {
-		pad := max(0, w-5-len(label))
+		pad := max(0, w-5-visualLen(label))
 		return ansiCol(t.HDR) + BOLD + " ── " + label + " " + strings.Repeat("─", pad) + RESET
 	}
 
@@ -547,7 +632,7 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	}
 
 	row := func(st, label, val string) string {
-		return fmt.Sprintf("  %s %-19s %s%s%s", st, label, info, val, RESET)
+		return fmt.Sprintf("  %s %-20s %s%s%s", st, label, info, val, RESET)
 	}
 
 	warnLine := func(s string) string {
@@ -558,11 +643,8 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	vms := ss.VMs
 	ss.mu.RUnlock()
 
-	// ════════════════════════════════════════════════
 	// LEFT COLUMN
-	// ════════════════════════════════════════════════
 
-	// ── kernel hardening ──────────────────────────
 	addL(ph("kernel hardening", lw))
 
 	aslr := readSysctl("kernel.randomize_va_space")
@@ -639,7 +721,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 
 	addL("")
 
-	// ── kernel taint ──────────────────────────────
 	addL(ph("kernel taint", lw))
 	taintVal, taintMsgs := readTaint()
 	if taintVal == 0 {
@@ -653,7 +734,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 
 	addL("")
 
-	// ── rootkit indicators ────────────────────────
 	addL(ph("rootkit indicators", lw))
 
 	procN, lavgN, delta := hiddenProcDelta()
@@ -757,11 +837,44 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	}
 	addL(row(imaSt, "IMA", imaNote))
 
-	// ════════════════════════════════════════════════
-	// RIGHT COLUMN
-	// ════════════════════════════════════════════════
+	addL("")
 
-	// ── firewall & sandbox ────────────────────────
+	addL(ph("filesystem", lw))
+
+	wwCount := checkWorldWritableEtc()
+	wwSt := ok
+	wwNote := "none"
+	if wwCount > 0 {
+		wwSt = warn
+		wwNote = fmt.Sprintf("%d world-writable files!", wwCount)
+	}
+	addL(row(wwSt, "world-writable /etc", wwNote))
+
+	shadowPerms := checkFilePerms("/etc/shadow")
+	shadowSt := ok
+	if shadowPerms != "0640" && shadowPerms != "0000" && shadowPerms != "n/a" {
+		shadowSt = warn
+	}
+	addL(row(shadowSt, "/etc/shadow perms", shadowPerms))
+
+	passwdPerms := checkFilePerms("/etc/passwd")
+	passwdSt := ok
+	if passwdPerms != "0644" && passwdPerms != "n/a" {
+		passwdSt = warn
+	}
+	addL(row(passwdSt, "/etc/passwd perms", passwdPerms))
+
+	nopasswd := checkSudoersNopasswd()
+	nopasswdSt := ok
+	nopasswdNote := "not found"
+	if nopasswd {
+		nopasswdSt = warn
+		nopasswdNote = "NOPASSWD found!"
+	}
+	addL(row(nopasswdSt, "sudoers NOPASSWD", nopasswdNote))
+
+	// RIGHT COLUMN
+
 	addR(ph("firewall & sandbox", rw))
 
 	aaSt := warn
@@ -821,7 +934,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 
 	addR("")
 
-	// ── network security ──────────────────────────
 	addR(ph("network security", rw))
 
 	syncook := readSysctl("net.ipv4.tcp_syncookies")
@@ -858,7 +970,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 
 	addR("")
 
-	// ── network vulnerabilities ───────────────────
 	addR(ph("network vulnerabilities", rw))
 
 	srcRoute4 := readSysctl("net.ipv4.conf.all.accept_source_route")
@@ -919,7 +1030,64 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 
 	addR("")
 
-	// ── listening ports ───────────────────────────
+	addR(ph("SSH hardening", rw))
+	if _, err := os.Stat("/etc/ssh/sshd_config"); err != nil {
+		addR(info + "  sshd not found" + RESET)
+	} else {
+		sshCfg := readSSHConfig()
+		sshCheck := func(key, goodVal, label string) {
+			v, ok2 := sshCfg[strings.ToLower(key)]
+			if !ok2 {
+				addR(row(ok, label, "n/a (default)"))
+				return
+			}
+			st := ok
+			if strings.ToLower(v) != goodVal {
+				st = warn
+			}
+			addR(row(st, label, v))
+		}
+		sshCheck("PermitRootLogin", "no", "PermitRootLogin")
+		sshCheck("PasswordAuthentication", "no", "PasswordAuth")
+		sshCheck("X11Forwarding", "no", "X11Forwarding")
+		sshCheck("PermitEmptyPasswords", "no", "PermitEmptyPwd")
+		sshCheck("Protocol", "2", "Protocol")
+
+		if v, exists := sshCfg["maxauthtries"]; exists {
+			n, err := strconv.Atoi(v)
+			st := ok
+			if err != nil || n > 4 {
+				st = warn
+			}
+			addR(row(st, "MaxAuthTries", v))
+		} else {
+			addR(row(ok, "MaxAuthTries", "n/a (default)"))
+		}
+	}
+
+	addR("")
+
+	addR(ph("security tools", rw))
+	secTools := checkSecTools()
+	toolOrder := []string{"lynis", "rkhunter", "chkrootkit", "aide", "clamscan", "debsums", "tiger"}
+	for _, tool := range toolOrder {
+		inst := secTools[tool]
+		st := ok
+		note := "installed"
+		if !inst {
+			st = warn
+			note = "not found"
+		}
+		if tool == "lynis" && inst {
+			if score := lynisScore(); score != "" {
+				note = "installed  score: " + score
+			}
+		}
+		addR(row(st, tool, note))
+	}
+
+	addR("")
+
 	addR(ph("listening ports", rw))
 	if len(ports) == 0 {
 		addR(info + "  (none)" + RESET)
@@ -943,7 +1111,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 
 	addR("")
 
-	// ── established connections ───────────────────
 	addR(ph("established connections", rw))
 	conns := readEstablished()
 	external := 0
@@ -974,7 +1141,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 
 	addR("")
 
-	// ── users & access ────────────────────────────
 	addR(ph("users & access", rw))
 
 	totalU, loginU := countShellUsers()
@@ -1002,7 +1168,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		}
 	}
 
-	// ── render 2-column layout ────────────────────
 	displayRows := rows - 2
 	total := max(len(lbuf), len(rbuf))
 	maxScroll := max(0, total-displayRows)
