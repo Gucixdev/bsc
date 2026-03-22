@@ -168,7 +168,7 @@ func rawOn() {
 
 func rawOff() {
 	syscall.Syscall(syscall.SYS_IOCTL, 0, syscall.TCSETS, uintptr(unsafe.Pointer(&origT)))
-	os.Stdout.WriteString(CLRSCR + HOME + SHOWCUR + RESET)
+	os.Stdout.WriteString(CLRSCR + HOME + SHOWCUR + "\033[0m")
 }
 
 type winsize struct {
