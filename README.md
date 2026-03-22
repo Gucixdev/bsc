@@ -12,7 +12,8 @@ Single-file Go TUI. No external deps — stdlib only. Static binary, zero runtim
 |-----|-----|
 | `1` | OVW — overview + process list |
 | `2` | DEV — kernel internals |
-| `3` | HEX — raw hex dump |
+| `3` | SEC — security & hardening |
+| `4` | HEX — raw hex dump |
 | `Tab` | cycle |
 
 ## OVW columns
@@ -44,6 +45,15 @@ Single-file Go TUI. No external deps — stdlib only. Static binary, zero runtim
 - syscall trace: 1-3 cores side by side (width≥150→3col, ≥80→2col), `←→` to shift window
 - registers (SP/PC) + disassembly at PC when process is in syscall
 
+## SEC tab
+
+- kernel hardening (ASLR, kptr_restrict, ptrace_scope, dmesg_restrict, perf_event_paranoid, NX/SMEP/SMAP)
+- kernel taint flags
+- rootkit indicators (proc count discrepancy, kallsyms leak, raw sockets, LD_PRELOAD, unsigned modules, SUID/SGID binaries, hidden processes)
+- MAC / firewall (AppArmor, SELinux, iptables/nftables)
+- network security (listening ports, established connections, external IPs, UDP listeners)
+- users & access (logged users, shell users, SSH authorized_keys)
+
 ## HEX tab
 
 Three sources switchable with `w` (cycles MEM→DISK→NET):
@@ -62,6 +72,7 @@ Dynamic bytes-per-row fills full terminal width. Green = data, gray = zero, yell
 q        quit
 +/-      interval ms
 R        record to ~/.local/share/bsc/
+a        anonymous mode (hides IPs, MACs, SSIDs, users, cmdlines)
 
 OVW
 ↑↓       select process
@@ -77,6 +88,9 @@ c / m    sort by cpu / mem
 
 DEV
 ←→       shift core window
+↑↓       scroll
+
+SEC
 ↑↓       scroll
 
 HEX
@@ -178,7 +192,7 @@ sensors    — extra hwmon fallback
 Tested on Linux x86_64. Everything reads from `/proc`, `/sys`, and standard Linux tools.
 
 ### macOS / BSD
-The core display logic is portable — curses works fine.
+The core display logic is portable — pure ANSI, no curses.
 What needs porting: `/proc` → `sysctl()` calls, RAPL → `powermetrics`,
 disk stats → `IOKit`, network → `getifaddrs`.
 PRs welcome.
@@ -190,4 +204,4 @@ PRs welcome.
 
 ## license
 
-MIT
+PIZZAWARE — do whatever you want. If it's useful, buy me a pizza.
