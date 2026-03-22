@@ -81,6 +81,25 @@ func gpuNvidiaProc() GPUStat {
 			g.Model = strings.TrimSpace(strings.TrimPrefix(line, "Model:"))
 			g.Model = strings.NewReplacer("NVIDIA GeForce ", "", "NVIDIA ", "").Replace(g.Model)
 		}
+		// "Video Memory:   4096 MB"
+		if strings.HasPrefix(line, "Video Memory:") {
+			f := strings.Fields(strings.TrimPrefix(line, "Video Memory:"))
+			if len(f) >= 1 {
+				n, _ := strconv.ParseInt(f[0], 10, 64)
+				g.VRAMTot = n << 20 // MB → bytes
+			}
+		}
+	}
+	// VRAM used: not in /proc/driver/nvidia — run nvidia-smi for used only
+	if g.VRAMTot > 0 {
+		out := runCmd(2*time.Second, "nvidia-smi",
+			"--query-gpu=memory.used", "--format=csv,noheader,nounits")
+		if out != "" {
+			n, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+			if err == nil {
+				g.VRAMUsed = n << 20
+			}
+		}
 	}
 	if v, err := os.ReadFile("/sys/module/nvidia/version"); err == nil {
 		g.Driver = strings.TrimSpace(string(v))

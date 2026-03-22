@@ -369,7 +369,7 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 		}
 	case 'w':
 		if ui.Tab == TAB_HEX {
-			ui.HexSource = (ui.HexSource + 1) % 3
+			ui.HexSource = (ui.HexSource + 1) % 4
 			ui.HexScroll = 0
 			ui.HexRegScroll = 0
 		}

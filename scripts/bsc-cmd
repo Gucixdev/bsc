@@ -4,7 +4,8 @@
 set -e
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${HOME}/.local/bin"
-CFG="${XDG_CONFIG_HOME:-$HOME/.config}/bsc"
+CFG="${XDG_CONFIG_HOME:-$HOME/.config}/pipboy"
+NAME="pipboy"
 
 ACTION="$1"; shift || true
 VARIANT=""
@@ -29,8 +30,8 @@ do_build() {
     case "$VARIANT" in
     go)
         echo "→ building Go..."
-        (cd "$ROOT/go" && CGO_ENABLED=0 go build -ldflags='-s -w' -o "$ROOT/bsc" .)
-        echo "✓ $ROOT/bsc  ($(du -sh "$ROOT/bsc" | cut -f1))"
+        (cd "$ROOT/go" && CGO_ENABLED=0 go build -ldflags='-s -w' -o "$ROOT/$NAME" .)
+        echo "✓ $ROOT/$NAME  ($(du -sh "$ROOT/$NAME" | cut -f1))"
         ;;
     py)
         ENTRY="$ROOT/python/bscmono.py"
@@ -44,22 +45,22 @@ do_build() {
 do_install() {
     ask_variant
     mkdir -p "$BIN" "$CFG"
-    if [ -f "$BIN/bsc" ] && [ "$YES" -eq 0 ]; then
-        printf "bsc already installed at $BIN/bsc — replace? [y/N]: "
+    if [ -f "$BIN/$NAME" ] && [ "$YES" -eq 0 ]; then
+        printf "$NAME already installed at $BIN/$NAME — replace? [y/N]: "
         read -r ans
         [ "$ans" = y ] || [ "$ans" = Y ] || { echo "aborted."; exit 0; }
     fi
     case "$VARIANT" in
     go)
-        [ -f "$ROOT/bsc" ] || { echo "error: $ROOT/bsc not found — run build first" >&2; exit 1; }
-        cp "$ROOT/bsc" "$BIN/bsc"
-        chmod 755 "$BIN/bsc"
-        echo "installed → $BIN/bsc"
+        [ -f "$ROOT/$NAME" ] || { echo "error: $ROOT/$NAME not found — run build first" >&2; exit 1; }
+        cp "$ROOT/$NAME" "$BIN/$NAME"
+        chmod 755 "$BIN/$NAME"
+        echo "installed → $BIN/$NAME"
         ;;
     py)
-        printf '#!/bin/bash\nexec python3 "%s/python/bscmono.py" "$@"\n' "$ROOT" > "$BIN/bsc"
-        chmod 755 "$BIN/bsc"
-        echo "installed → $BIN/bsc (python wrapper)"
+        printf '#!/bin/bash\nexec python3 "%s/python/bscmono.py" "$@"\n' "$ROOT" > "$BIN/$NAME"
+        chmod 755 "$BIN/$NAME"
+        echo "installed → $BIN/$NAME (python wrapper)"
         ;;
     esac
     if [ ! -f "$CFG/theme.json" ]; then
@@ -77,24 +78,23 @@ do_install() {
 }
 
 do_uninstall() {
-    # search PATH + common bin dirs + ~ for files named exactly 'bsc'
     declare -A seen
     candidates=()
     IFS=: read -ra pdirs <<< "$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
     for dir in "${pdirs[@]}"; do
         [ -n "${seen[$dir]}" ] && continue; seen[$dir]=1
-        [ -f "$dir/bsc" ] && candidates+=("$dir/bsc")
+        [ -f "$dir/$NAME" ] && candidates+=("$dir/$NAME")
     done
     while IFS= read -r f; do
         candidates+=("$f")
-    done < <(find "$HOME" -name bsc -type f 2>/dev/null)
+    done < <(find "$HOME" -name "$NAME" -type f 2>/dev/null)
 
     if [ ${#candidates[@]} -eq 0 ]; then
-        echo "bsc not found"; return
+        echo "$NAME not found"; return
     fi
 
     if command -v fzf &>/dev/null; then
-        selected=$(printf '%s\n' "${candidates[@]}" | fzf --multi --prompt="select bsc binaries to remove > ")
+        selected=$(printf '%s\n' "${candidates[@]}" | fzf --multi --prompt="select $NAME binaries to remove > ")
         [ -z "$selected" ] && { echo "nothing selected"; return; }
     else
         printf '%s\n' "${candidates[@]}"
@@ -117,7 +117,7 @@ do_uninstall() {
 
 do_info() {
     cat <<EOF
-bsc-cmd — build/install helper for bsc
+bsc-cmd — build/install helper for pipboy
 
 USAGE
   bash bsc-cmd <action> [go|py] [-y]
@@ -126,7 +126,7 @@ USAGE
 ACTIONS
   build      compile Go binary  /  validate Python syntax
   install    copy artifact to $BIN; creates bsc-cmd wrapper if missing
-  uninstall  remove every 'bsc' binary found in PATH
+  uninstall  remove every '$NAME' binary found in PATH
   info       show this message
 
 FLAGS

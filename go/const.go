@@ -27,6 +27,7 @@ const (
 	HEX_MEM  = 0
 	HEX_DISK = 1
 	HEX_NET  = 2
+	HEX_VRAM = 3
 
 	RING_CAP = 200
 )

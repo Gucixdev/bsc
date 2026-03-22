@@ -34,17 +34,17 @@ type Theme struct {
 }
 
 var defaultTheme = Theme{
-	HDR:  Color{0xff, 0x87, 0x00},
-	CPU:  Color{0x87, 0x00, 0xff},
+	HDR:  Color{0x77, 0x00, 0xff}, // purple
+	CPU:  Color{0x99, 0x44, 0xff}, // lighter purple
 	GPU:  Color{0x00, 0xff, 0x41}, // matrix neon green
-	RAM:  Color{0xff, 0xd7, 0x00},
-	ZRAM: Color{0xaf, 0x87, 0xff},
+	RAM:  Color{0xff, 0xd7, 0x00}, // yellow
+	ZRAM: Color{0xaf, 0x87, 0xff}, // soft purple
 	DISK: Color{0x00, 0xff, 0x41}, // matrix neon green
-	NET:  Color{0x00, 0x87, 0xff},
-	SEL:  Color{0xff, 0xff, 0x00},
-	USB:  Color{0x77, 0x00, 0xff},
-	MARK: Color{0xff, 0x87, 0x00},
-	WARN: Color{0xff, 0x00, 0x00},
+	NET:  Color{0x00, 0x87, 0xff}, // blue
+	SEL:  Color{0xff, 0xff, 0x00}, // yellow
+	USB:  Color{0x77, 0x00, 0xff}, // purple (lines/separators)
+	MARK: Color{0x77, 0x00, 0xff}, // purple
+	WARN: Color{0xff, 0x00, 0x00}, // red
 }
 
 var truecolor bool
@@ -89,12 +89,11 @@ func loadTheme() Theme {
 		if c, ok := xresColor(xres, "*.foreground", "*foreground"); ok { t.DISK = c; t.GPU = c }
 		if c, ok := xresColor(xres, "*.color1", "*.color9");        ok { t.WARN = c }
 		if c, ok := xresColor(xres, "*.color2", "*.color10");       ok { t.GPU = c; t.DISK = c }
-		if c, ok := xresColor(xres, "*.color3", "*.color11");       ok { t.HDR = c; t.RAM = c }
+		if c, ok := xresColor(xres, "*.color5", "*.color13");       ok { t.HDR = c; t.USB = c; t.MARK = c }
+		if c, ok := xresColor(xres, "*.color3", "*.color11");       ok { t.RAM = c; t.SEL = c }
 		if c, ok := xresColor(xres, "*.color4", "*.color12");       ok { t.NET = c }
 		if c, ok := xresColor(xres, "*.color5", "*.color13");       ok { t.CPU = c }
 		if c, ok := xresColor(xres, "*.color6", "*.color14");       ok { t.ZRAM = c }
-		if c, ok := xresColor(xres, "*.color5", "*.color13");       ok { t.USB = c }
-		if c, ok := xresColor(xres, "*.color3", "*.color11");       ok { t.SEL = c; t.MARK = c }
 	}
 
 	path := os.Getenv("HOME") + "/.config/pipboy/theme.json"
