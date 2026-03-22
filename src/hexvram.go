@@ -98,7 +98,7 @@ func openVRAMBar() vramMapData {
 		return vramCache
 	}
 	// NOTE: we intentionally do NOT close f — the mmap needs it alive
-	// This is fine since pip-boy runs as a daemon
+	// This is fine since bsc runs as a daemon
 
 	data, err2 := syscall.Mmap(int(f.Fd()), 0, int(mapSize),
 		syscall.PROT_READ, syscall.MAP_SHARED)

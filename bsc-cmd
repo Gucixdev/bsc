@@ -127,7 +127,7 @@ do_uninstall() {
 
 do_info() {
     cat <<EOF
-bsc-cmd — build/install helper for pipboy
+bsc-cmd — build/install helper for bsc
 
 USAGE
   bash bsc-cmd <action> [go|py] [-y]
