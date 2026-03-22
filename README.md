@@ -1,11 +1,11 @@
-# pipboy
+# bsc
 
 TUI system monitor. Go, no deps, static binary.
 
 ```
 bash scripts/bsc-cmd build go
 bash scripts/bsc-cmd install go -y
-pipboy
+bsc
 ```
 
 ---
