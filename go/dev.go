@@ -202,12 +202,12 @@ func drawDEV(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		buf.WriteString(pos(row, 0))
 		buf.WriteString(ansiCol(t.HDR) + clampStr("─── KERNEL LOG "+strings.Repeat("─", max(0, cols-15)), cols) + RESET + CLEOL)
 		row++
-		row = devKernelLog(buf, row, cols, rows, t)
+		row = devKernelLog(buf, row, cols, rows, t, ui.Anon)
 	}
 
 	// ── PID DETAILS ───────────────────────────────────────────────────────────
 	if ui.DetailPID > 0 && row < rows-5 {
-		row = devPIDDetails(buf, row, cols, rows, ui.DetailPID, t)
+		row = devPIDDetails(buf, row, cols, rows, ui.DetailPID, t, ui.Anon)
 	}
 
 	// ── SYSCALL TRACE ─────────────────────────────────────────────────────────
@@ -470,7 +470,15 @@ func devCPUFlags(buf *strings.Builder, row, cols, rows int, t *Theme) int {
 }
 
 // devKernelLog — dmesg last warn/err lines, returns next row
-func devKernelLog(buf *strings.Builder, row, cols, rows int, t *Theme) int {
+func devKernelLog(buf *strings.Builder, row, cols, rows int, t *Theme, anon bool) int {
+	if anon {
+		if row < rows-3 {
+			buf.WriteString(pos(row, 0))
+			buf.WriteString(DIM + ansiCol(t.USB) + "  [ANON]" + RESET + CLEOL)
+			row++
+		}
+		return row
+	}
 	var kmsgs []string
 	out := runCmd(1200*time.Millisecond, "dmesg", "--time-format=reltime", "--level=err,warn", "-n", "warn")
 	if out != "" {
@@ -516,7 +524,7 @@ func devKernelLog(buf *strings.Builder, row, cols, rows int, t *Theme) int {
 }
 
 // devPIDDetails — oom, cgroup, ns, registers, disasm for selected PID, returns next row
-func devPIDDetails(buf *strings.Builder, row, cols, rows, pid int, t *Theme) int {
+func devPIDDetails(buf *strings.Builder, row, cols, rows, pid int, t *Theme, anon bool) int {
 	buf.WriteString(pos(row, 0))
 	buf.WriteString(ansiCol(t.HDR) + clampStr(fmt.Sprintf("─── PID %d DETAILS ", pid)+
 		strings.Repeat("─", max(0, cols-20)), cols) + RESET + CLEOL)
@@ -535,10 +543,14 @@ func devPIDDetails(buf *strings.Builder, row, cols, rows, pid int, t *Theme) int
 		nsNames = append(nsNames, e.Name())
 	}
 	if row < rows-3 {
+		cgDisplay := cg
+		if anon && cgDisplay != "" {
+			cgDisplay = "[***]"
+		}
 		buf.WriteString(pos(row, 0))
 		buf.WriteString(ansiCol(t.DISK) + clampStr(fmt.Sprintf(
 			"  oom:%s adj:%s  cg:%s",
-			strings.TrimSpace(string(oom)), strings.TrimSpace(string(oomAdj)), cg,
+			strings.TrimSpace(string(oom)), strings.TrimSpace(string(oomAdj)), cgDisplay,
 		), cols) + RESET + CLEOL)
 		row++
 	}
@@ -566,42 +578,44 @@ func devPIDDetails(buf *strings.Builder, row, cols, rows, pid int, t *Theme) int
 		return row
 	}
 
-	buf.WriteString(pos(row, 0))
-	buf.WriteString(ansiCol(t.HDR) + clampStr("─── REGISTERS & DISASM "+strings.Repeat("─", max(0, cols-23)), cols) + RESET + CLEOL)
-	row++
-
-	names := []string{"rax", "rdi", "rsi", "rdx", "r10", "r8 ", "r9 ", "rsp", "rip"}
-	perLine := max(1, cols/30)
-	for i := 0; i < 9 && row < rows-3; i += perLine {
-		var pairs []string
-		for j := 0; j < perLine && i+j < 9; j++ {
-			pairs = append(pairs, fmt.Sprintf("%s:%s", names[i+j], sc[i+j]))
-		}
+	if !anon {
 		buf.WriteString(pos(row, 0))
-		buf.WriteString(ansiCol(t.DISK) + clampStr("  "+strings.Join(pairs, "  "), cols) + RESET + CLEOL)
+		buf.WriteString(ansiCol(t.HDR) + clampStr("─── REGISTERS & DISASM "+strings.Repeat("─", max(0, cols-23)), cols) + RESET + CLEOL)
 		row++
-	}
 
-	// syscall name
-	if nr, err := strconv.ParseInt(sc[0], 0, 64); err == nil && row < rows-3 {
-		name := syscallName(int(nr))
-		buf.WriteString(pos(row, 0))
-		buf.WriteString(ansiCol(t.SEL) + clampStr(fmt.Sprintf("  syscall: %s(%d)", name, nr), cols) + RESET + CLEOL)
-		row++
-	}
-
-	// disasm at rip
-	if row < rows-5 {
-		buf.WriteString(pos(row, 0))
-		buf.WriteString(DIM + ansiCol(t.USB) + clampStr(fmt.Sprintf("  disasm @ rip %s:", sc[8]), cols) + RESET + CLEOL)
-		row++
-		for _, dline := range disasmAtRIP(pid, sc[8], rows-row-3) {
-			if row >= rows-3 {
-				break
+		names := []string{"rax", "rdi", "rsi", "rdx", "r10", "r8 ", "r9 ", "rsp", "rip"}
+		perLine := max(1, cols/30)
+		for i := 0; i < 9 && row < rows-3; i += perLine {
+			var pairs []string
+			for j := 0; j < perLine && i+j < 9; j++ {
+				pairs = append(pairs, fmt.Sprintf("%s:%s", names[i+j], sc[i+j]))
 			}
 			buf.WriteString(pos(row, 0))
-			buf.WriteString(ansiCol(t.DISK) + clampStr(dline, cols) + RESET + CLEOL)
+			buf.WriteString(ansiCol(t.DISK) + clampStr("  "+strings.Join(pairs, "  "), cols) + RESET + CLEOL)
 			row++
+		}
+
+		// syscall name
+		if nr, err := strconv.ParseInt(sc[0], 0, 64); err == nil && row < rows-3 {
+			name := syscallName(int(nr))
+			buf.WriteString(pos(row, 0))
+			buf.WriteString(ansiCol(t.SEL) + clampStr(fmt.Sprintf("  syscall: %s(%d)", name, nr), cols) + RESET + CLEOL)
+			row++
+		}
+
+		// disasm at rip
+		if row < rows-5 {
+			buf.WriteString(pos(row, 0))
+			buf.WriteString(DIM + ansiCol(t.USB) + clampStr(fmt.Sprintf("  disasm @ rip %s:", sc[8]), cols) + RESET + CLEOL)
+			row++
+			for _, dline := range disasmAtRIP(pid, sc[8], rows-row-3) {
+				if row >= rows-3 {
+					break
+				}
+				buf.WriteString(pos(row, 0))
+				buf.WriteString(ansiCol(t.DISK) + clampStr(dline, cols) + RESET + CLEOL)
+				row++
+			}
 		}
 	}
 	return row

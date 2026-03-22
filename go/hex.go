@@ -319,7 +319,7 @@ func fmtBufSize(sz int) string {
 
 func drawHEX(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Theme) {
 	// ── header ──
-	srcName := [3]string{"MEM", "DISK", "NET"}
+	srcName := [4]string{"MEM", "DISK", "NET", "VRAM"}
 	hdr := fmt.Sprintf(" HEX  src:%s", srcName[ui.HexSource])
 	if ui.HexSearchMode {
 		hdr += fmt.Sprintf("  /:%s_", ui.HexSearch)
@@ -327,6 +327,17 @@ func drawHEX(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	hdr = clampStr(hdr+strings.Repeat("─", max(0, cols-len(hdr))), cols)
 	buf.WriteString(pos(0, 0))
 	buf.WriteString(ansiCol(t.HDR) + BOLD + hdr + RESET + CLEOL)
+
+	if ui.Anon {
+		msg := " [ANON] hex dump disabled in anonymous mode"
+		for r := 1; r < rows-1; r++ {
+			buf.WriteString(pos(r, 0) + CLEOL)
+		}
+		buf.WriteString(pos(rows/2, (cols-len(msg))/2))
+		buf.WriteString(ansiCol(t.WARN) + BOLD + msg + RESET)
+		drawStatusBar(buf, rows, cols, ui, ui.Interval, ss, t)
+		return
+	}
 
 	// ── layout ──
 	paneW := cols / 4
@@ -369,6 +380,8 @@ func drawHEX(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		drawHexDISK(buf, rows, cols, paneW, sepX, dumpX, dumpW, bpr, paneH, ss, ui, t, search)
 	case HEX_NET:
 		drawHexNET(buf, rows, cols, paneW, sepX, dumpX, dumpW, bpr, paneH, ss, ui, t, search)
+	case HEX_VRAM:
+		drawHexVRAM(buf, rows, cols, paneW, sepX, dumpX, dumpW, bpr, paneH, ss, ui, t, search)
 	}
 
 	drawHexInfo(buf, rows, cols, ui, ss, t)
