@@ -905,6 +905,89 @@ func checkRootSSHDir() string {
 	return fmt.Sprintf("%04o", info.Mode().Perm())
 }
 
+func checkBluetooth() (adapters []string, powered, discoverable bool) {
+	entries, err := os.ReadDir("/sys/class/bluetooth")
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		base := "/sys/class/bluetooth/" + e.Name()
+		adapters = append(adapters, e.Name())
+		if raw, err := os.ReadFile(base + "/powered"); err == nil && strings.TrimSpace(string(raw)) == "1" {
+			powered = true
+		}
+		if raw, err := os.ReadFile(base + "/discoverable"); err == nil && strings.TrimSpace(string(raw)) == "1" {
+			discoverable = true
+		}
+	}
+	return
+}
+
+func checkRfkillBT() (soft, hard bool) {
+	entries, err := os.ReadDir("/sys/class/rfkill")
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		base := "/sys/class/rfkill/" + e.Name()
+		tp, _ := os.ReadFile(base + "/type")
+		if strings.TrimSpace(string(tp)) != "bluetooth" {
+			continue
+		}
+		s, _ := os.ReadFile(base + "/soft")
+		h, _ := os.ReadFile(base + "/hard")
+		if strings.TrimSpace(string(s)) == "1" {
+			soft = true
+		}
+		if strings.TrimSpace(string(h)) == "1" {
+			hard = true
+		}
+	}
+	return
+}
+
+func readBluetoothCfg() map[string]string {
+	out := map[string]string{}
+	raw, err := os.ReadFile("/etc/bluetooth/main.conf")
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "[") {
+			continue
+		}
+		f := strings.SplitN(line, "=", 2)
+		if len(f) == 2 {
+			out[strings.TrimSpace(f[0])] = strings.TrimSpace(f[1])
+		}
+	}
+	return out
+}
+
+func countBTPairedDevices() int {
+	n := 0
+	adapters, err := os.ReadDir("/var/lib/bluetooth")
+	if err != nil {
+		return -1
+	}
+	for _, a := range adapters {
+		if !a.IsDir() {
+			continue
+		}
+		devs, err := os.ReadDir("/var/lib/bluetooth/" + a.Name())
+		if err != nil {
+			continue
+		}
+		for _, d := range devs {
+			if d.IsDir() {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 func checkHostsDenyExists() bool {
 	raw, err := os.ReadFile("/etc/hosts.deny")
 	if err != nil {
@@ -934,10 +1017,11 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	}
 
 	lbl := func(label, val string, c Color) ColLine {
-		return ColLine{Text: fmt.Sprintf("  %-16s %s", label, val), C: c}
+		text := fmt.Sprintf("  %s%-16s%s%s%s", DIM, label, RESET, ansiCol(c), val)
+		return ColLine{Text: text, Pre: true}
 	}
 	hdr := func(name string) ColLine {
-		return ColLine{Text: " " + name, C: t.HDR, Bold: true}
+		return ColLine{Text: " " + BOLD + ansiCol(t.HDR) + name, Pre: true}
 	}
 
 	var lines []ColLine
@@ -1297,6 +1381,41 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		}
 	}
 
+	// bluetooth
+	addh("bluetooth")
+	btAdapters, btPowered, btDisc := checkBluetooth()
+	if len(btAdapters) == 0 {
+		add(ColLine{Text: "  no adapter", C: inf, Dim: true})
+	} else {
+		addl("adapters", strings.Join(btAdapters, " "), inf)
+		addl("powered", map[bool]string{true:"YES",false:"no"}[btPowered], bc(!btPowered))
+		addl("discoverable", map[bool]string{true:"YES — visible!",false:"hidden"}[btDisc], bc(!btDisc))
+		btSoft, btHard := checkRfkillBT()
+		rfkNote := "not blocked"
+		if btHard {
+			rfkNote = "hard blocked (hw)"
+		} else if btSoft {
+			rfkNote = "soft blocked"
+		}
+		addl("rfkill", rfkNote, bc(btSoft || btHard))
+		addl("bluetoothd", map[bool]string{true:"running",false:"stopped"}[checkServiceRunning("bluetoothd")], bc(!checkServiceRunning("bluetoothd")))
+		btCfg := readBluetoothCfg()
+		if v, ok := btCfg["AutoEnable"]; ok {
+			addl("AutoEnable", v, bc(strings.ToLower(v) != "true"))
+		}
+		if v, ok := btCfg["DiscoverableTimeout"]; ok {
+			n, _ := strconv.Atoi(v)
+			addl("DiscoverableTimeout", v+"s", bc(n > 0))
+		}
+		if v, ok := btCfg["JustWorksRejectService"]; ok {
+			addl("JustWorksReject", v, bc(strings.ToLower(v) == "true"))
+		}
+		paired := countBTPairedDevices()
+		if paired >= 0 {
+			addl("paired devices", fmt.Sprintf("%d", paired), inf)
+		}
+	}
+
 	// dynamic column count
 	nCols := 1
 	if cols >= 140 { nCols = 3 } else if cols >= 80 { nCols = 2 }
@@ -1327,19 +1446,24 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		for ci, col := range colData {
 			w := widths[ci]
 			idx := ui.SecScroll + row
-			var attr, text string
 			if idx < len(col) {
 				l := col[idx]
-				runes := []rune(l.Text)
-				if len(runes) > w { runes = runes[:w] }
-				text = string(runes) + strings.Repeat(" ", max(0, w-len(runes)))
-				attr = ansiCol(l.C)
-				if l.Bold { attr = BOLD + attr }
-				if l.Dim  { attr = DIM  + attr }
+				if l.Pre {
+					clamped := clampVisual(l.Text, w)
+					pad := strings.Repeat(" ", max(0, w-visualLen(clamped)))
+					buf.WriteString(clamped + pad + RESET)
+				} else {
+					runes := []rune(l.Text)
+					if len(runes) > w { runes = runes[:w] }
+					text := string(runes) + strings.Repeat(" ", max(0, w-len(runes)))
+					attr := ansiCol(l.C)
+					if l.Bold { attr = BOLD + attr }
+					if l.Dim  { attr = DIM  + attr }
+					buf.WriteString(attr + text + RESET)
+				}
 			} else {
-				text = strings.Repeat(" ", w)
+				buf.WriteString(strings.Repeat(" ", w))
 			}
-			buf.WriteString(attr + text + RESET)
 		}
 		buf.WriteString(CLEOL)
 	}

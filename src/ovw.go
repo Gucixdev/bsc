@@ -39,11 +39,12 @@ type ColLine struct {
 	C    Color
 	Dim  bool
 	Bold bool
+	Pre  bool // text already contains ANSI codes; skip attr prefix, use visualLen
 }
 
 func addLine(lines *[]ColLine, h int, text string, c Color, dim, bold bool) {
 	if len(*lines) < h {
-		*lines = append(*lines, ColLine{text, c, dim, bold})
+		*lines = append(*lines, ColLine{Text: text, C: c, Dim: dim, Bold: bold})
 	}
 }
 

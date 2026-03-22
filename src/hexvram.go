@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 	"syscall"
-	"unsafe"
 )
 
 // findNvidiaPCIAddr — scan /sys/bus/pci/devices for NVIDIA vendor (0x10de)
@@ -190,9 +189,6 @@ func drawHexVRAM(buf *strings.Builder, rows, cols, paneW, sepX, dumpX, dumpW, bp
 					if i := strings.LastIndexByte(name, '/'); i >= 0 {
 						name = name[i+1:]
 					}
-					writePane(row, fmt.Sprintf("%s%5s %s%s%dMB%s",
-						dim, pid, RESET+ansiCol(t.DISK), name+"  ", 0, RESET))
-					_ = mem
 					writePane(row, fmt.Sprintf("%s%5s %s%-12s %s%sMB%s",
 						dim, pid, RESET, name, ansiCol(t.RAM), mem, RESET))
 				} else {
@@ -268,8 +264,6 @@ func drawHexVRAM(buf *strings.Builder, rows, cols, paneW, sepX, dumpX, dumpW, bp
 		if allZero {
 			lineCol = dim
 		}
-		// force-read via unsafe to avoid compiler optimizing away the copy
-		_ = *(*byte)(unsafe.Pointer(&vm.data[off]))
 		line := hexLine(off, 0, chunk[:end-off], bpr, search, lineCol, t)
 		buf.WriteString(pos(r+1, dumpX))
 		buf.WriteString(lineCol + line + RESET + CLEOL)
