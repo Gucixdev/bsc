@@ -136,6 +136,12 @@ func readVRAMProcs() []string {
 
 func drawHexVRAM(buf *strings.Builder, rows, cols, paneW, sepX, dumpX, dumpW, bpr, paneH int,
 	ss *SysState, ui *UI, t *Theme, search []byte) {
+	defer func() {
+		if r := recover(); r != nil {
+			buf.WriteString(pos(3, dumpX))
+			buf.WriteString(ansiCol(t.WARN) + fmt.Sprintf("vram panic: %v", r) + RESET + CLEOL)
+		}
+	}()
 
 	vm := openVRAMBar()
 	dim := DIM + ansiCol(t.USB)
