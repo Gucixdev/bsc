@@ -780,9 +780,8 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	info := DIM + ansiCol(t.USB)
 	_ = part
 
-	ph := func(label string, w int) string {
-		pad := max(0, w-5-visualLen(label))
-		return ansiCol(t.HDR) + BOLD + " ── " + label + " " + strings.Repeat("─", pad) + RESET
+	ph := func(_ string, w int) string {
+		return ansiCol(t.HDR) + DIM + strings.Repeat("─", w) + RESET
 	}
 
 	boolOK := func(v string, good ...string) string {
