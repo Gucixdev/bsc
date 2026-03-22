@@ -255,6 +255,9 @@ func render(ss *SysState, ui *UI, t *Theme) {
 
 	var buf strings.Builder
 	buf.WriteString(SYNCON)
+	if t.HasBG {
+		buf.WriteString(bgCol(t.BG))
+	}
 	buf.WriteString(HOME)
 
 	switch ui.Tab {

@@ -31,20 +31,22 @@ type Color [3]uint8
 
 type Theme struct {
 	HDR, CPU, GPU, RAM, ZRAM, DISK, NET, SEL, USB, MARK, WARN Color
+	BG    Color
+	HasBG bool
 }
 
 var defaultTheme = Theme{
-	HDR:  Color{0x77, 0x00, 0xff}, // purple
-	CPU:  Color{0x99, 0x44, 0xff}, // lighter purple
-	GPU:  Color{0x00, 0xff, 0x41}, // matrix neon green
-	RAM:  Color{0xff, 0xd7, 0x00}, // yellow
-	ZRAM: Color{0xaf, 0x87, 0xff}, // soft purple
-	DISK: Color{0x00, 0xff, 0x41}, // matrix neon green
-	NET:  Color{0x00, 0x87, 0xff}, // blue
-	SEL:  Color{0xff, 0xff, 0x00}, // yellow
-	USB:  Color{0x77, 0x00, 0xff}, // purple (lines/separators)
-	MARK: Color{0x77, 0x00, 0xff}, // purple
-	WARN: Color{0xff, 0x00, 0x00}, // red
+	HDR:  Color{0x77, 0x00, 0xff},
+	CPU:  Color{0x99, 0x44, 0xff},
+	GPU:  Color{0x00, 0xff, 0x41},
+	RAM:  Color{0xff, 0xd7, 0x00},
+	ZRAM: Color{0xaf, 0x87, 0xff},
+	DISK: Color{0x00, 0xff, 0x41},
+	NET:  Color{0x00, 0x87, 0xff},
+	SEL:  Color{0xff, 0xff, 0x00},
+	USB:  Color{0x77, 0x00, 0xff},
+	MARK: Color{0x77, 0x00, 0xff},
+	WARN: Color{0xff, 0x00, 0x00},
 }
 
 var truecolor bool
@@ -120,6 +122,13 @@ func loadTheme() Theme {
 	set(&t.RAM, "RAM"); set(&t.ZRAM, "ZRAM"); set(&t.DISK, "DISK")
 	set(&t.NET, "NET"); set(&t.SEL, "SEL"); set(&t.USB, "USB")
 	set(&t.MARK, "MARK"); set(&t.WARN, "WARN")
+	if v, ok := raw["BG"]; ok && len(v) == 7 && v[0] == '#' {
+		r, _ := strconv.ParseUint(v[1:3], 16, 8)
+		g, _ := strconv.ParseUint(v[3:5], 16, 8)
+		b, _ := strconv.ParseUint(v[5:7], 16, 8)
+		t.BG = Color{uint8(r), uint8(g), uint8(b)}
+		t.HasBG = true
+	}
 	return t
 }
 
