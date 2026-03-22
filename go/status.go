@@ -21,6 +21,9 @@ func fmtUptime(secs int64) string {
 
 func drawStatusBar(buf *strings.Builder, rows, cols int, ui *UI, interval time.Duration, ss *SysState, t *Theme) {
 	global := "q Tab=cycle +/-=ms R=rec"
+	if ui.Recording {
+		global += " [REC]"
+	}
 	var local string
 	switch ui.Tab {
 	case TAB_OVW:
@@ -30,6 +33,8 @@ func drawStatusBar(buf *strings.Builder, rows, cols int, ui *UI, interval time.D
 		}
 	case TAB_DEV:
 		local = " | ↑↓=scroll ←→=cores"
+	case TAB_SEC:
+		local = " | ↑↓=scroll"
 	case TAB_HEX:
 		srcName := [3]string{"MEM", "DISK", "NET"}[ui.HexSource]
 		local = fmt.Sprintf(" | ↑↓=scroll ←→=sel w=src l=lock /=search  src:%s", srcName)

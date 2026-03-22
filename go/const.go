@@ -11,7 +11,8 @@ const (
 
 	TAB_OVW = 0
 	TAB_DEV = 1
-	TAB_HEX = 2
+	TAB_SEC = 2
+	TAB_HEX = 3
 
 	SORT_CPU = "cpu"
 	SORT_MEM = "mem"

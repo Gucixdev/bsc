@@ -60,7 +60,7 @@ func disasmAtRIP(pid int, ripHex string, maxLines int) []string {
 	}
 
 	if _, err := exec.LookPath("objdump"); err == nil {
-		tmp, err := os.CreateTemp("", "bsc_asm")
+		tmp, err := os.CreateTemp("", "pip-boy_asm")
 		if err == nil {
 			tmp.Write(bs)
 			tmp.Close()
@@ -382,9 +382,9 @@ func readVMs() VMStat {
 	return v
 }
 
-// readHooks — ~/.config/bsc/hooks/* exec (TTL in collectAll)
+// readHooks — ~/.config/pip-boy/hooks/* exec (TTL in collectAll)
 func readHooks() []string {
-	dir := os.Getenv("HOME") + "/.config/bsc/hooks"
+	dir := os.Getenv("HOME") + "/.config/pip-boy/hooks"
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil

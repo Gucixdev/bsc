@@ -103,7 +103,7 @@ func loadTheme() Theme {
 	}
 
 	// theme.json overrides XResources
-	path := os.Getenv("HOME") + "/.config/bsc/theme.json"
+	path := os.Getenv("HOME") + "/.config/pip-boy/theme.json"
 	f, err := os.Open(path)
 	if err != nil {
 		return t

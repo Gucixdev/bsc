@@ -272,6 +272,8 @@ func render(ss *SysState, ui *UI, t *Theme) {
 		drawOVW(&buf, rows, cols, cores, load, raplW, mem, gpu, disks, nets, gateway, audio, usb, vms, procs, cnts, histCPU, histGPU, histVRAM, histNetRx, histNetTx, histDiskR, histDiskW, histVMsRun, histQEMURun, histVBoxRun, histVMwRun, histDockRun, histPodRun, histCores, ui, t, ss)
 	case TAB_DEV:
 		drawDEV(&buf, rows, cols, ss, ui, t)
+	case TAB_SEC:
+		drawSEC(&buf, rows, cols, ss, ui, t)
 	case TAB_HEX:
 		drawHEX(&buf, rows, cols, ss, ui, t)
 	}
@@ -345,16 +347,18 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 	}
 
 	switch b {
-	case 'q', 'Q':
+	case 17: // Ctrl+Q
 		return true
 	case '1':
 		ui.Tab = TAB_OVW
 	case '2':
 		ui.Tab = TAB_DEV
 	case '3':
+		ui.Tab = TAB_SEC
+	case '4':
 		ui.Tab = TAB_HEX
 	case '\t':
-		ui.Tab = (ui.Tab + 1) % 3
+		ui.Tab = (ui.Tab + 1) % 4
 	case '+', '=':
 		ui.Interval += 100 * time.Millisecond
 		if ui.Interval > 10*time.Second {
@@ -555,7 +559,7 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 	}
 	// Shift+Tab = ESC [ Z
 	if len(seq) == 2 && seq[0] == '[' && seq[1] == 'Z' {
-		ui.Tab = (ui.Tab + 2) % 3 // prev tab
+		ui.Tab = (ui.Tab + 3) % 4 // prev tab
 		return
 	}
 	if len(seq) < 2 || seq[0] != '[' {
