@@ -620,10 +620,152 @@ func lynisScore() string {
 	return ""
 }
 
+func secSumKernel(t *Theme, h int) []ColLine {
+	var lines []ColLine
+	add := func(text string, c Color) { addLine(&lines, h, text, c, false, false) }
+	c := func(good bool) Color {
+		if good {
+			return t.DISK
+		}
+		return t.WARN
+	}
+	add("KERNEL", t.HDR)
+	aslr := readSysctl("kernel.randomize_va_space")
+	add(fmt.Sprintf("  ASLR          %s", aslrDesc(aslr)), c(aslr == "2"))
+	kptr := readSysctl("kernel.kptr_restrict")
+	add(fmt.Sprintf("  kptr          %s", kptrDesc(kptr)), c(kptr != "0"))
+	ptrace := readSysctl("kernel.yama.ptrace_scope")
+	add(fmt.Sprintf("  ptrace        %s", map[string]string{"0": "unrestricted", "1": "parent-only", "2": "admin-only", "3": "disabled", "?": "n/a"}[ptrace]), c(ptrace != "0"))
+	lockdown := checkKernelLockdown()
+	add(fmt.Sprintf("  lockdown      %s", lockdown), c(lockdown != "none" && lockdown != "n/a"))
+	moddis := readSysctl("kernel.modules_disabled")
+	add(fmt.Sprintf("  modules       %s", map[string]string{"0": "loadable", "1": "locked", "?": "n/a"}[moddis]), c(moddis == "1"))
+	taintVal, _ := readTaint()
+	add(fmt.Sprintf("  taint         %d", taintVal), c(taintVal == 0))
+	ipfwd := readSysctl("net.ipv4.ip_forward")
+	add(fmt.Sprintf("  ip_forward    %s", map[string]string{"0": "off", "1": "ON", "?": "?"}[ipfwd]), c(ipfwd != "1"))
+	return lines
+}
+
+func secSumRootkit(t *Theme, h int) []ColLine {
+	var lines []ColLine
+	add := func(text string, c Color) { addLine(&lines, h, text, c, false, false) }
+	c := func(good bool) Color {
+		if good {
+			return t.DISK
+		}
+		return t.WARN
+	}
+	add("ROOTKIT", t.HDR)
+	_, _, delta := hiddenProcDelta()
+	add(fmt.Sprintf("  hidden procs  Δ:%d", delta), c(delta <= 5))
+	pls := checkLdPreload()
+	add(fmt.Sprintf("  LD_PRELOAD    %d procs", len(pls)), c(len(pls) == 0))
+	kallNote := "hidden"
+	if checkKallsymsLeak() {
+		kallNote = "LEAKED"
+	}
+	add(fmt.Sprintf("  kallsyms      %s", kallNote), c(!checkKallsymsLeak()))
+	rawN := countRawSockets()
+	add(fmt.Sprintf("  raw sockets   %d", rawN), c(rawN <= 2))
+	unsig := readUnsignedModules()
+	add(fmt.Sprintf("  unsigned mods %d", len(unsig)), c(len(unsig) == 0))
+	suids := cachedCountSUID()
+	add(fmt.Sprintf("  SUID bins     %d", suids), c(suids <= 30))
+	gl := checkGlobalPreload()
+	add(fmt.Sprintf("  ld.so.preload %d entries", len(gl)), c(len(gl) == 0))
+	return lines
+}
+
+func secSumNetwork(t *Theme, h int) []ColLine {
+	var lines []ColLine
+	add := func(text string, c Color) { addLine(&lines, h, text, c, false, false) }
+	c := func(good bool) Color {
+		if good {
+			return t.DISK
+		}
+		return t.WARN
+	}
+	add("NETWORK", t.HDR)
+	syncook := readSysctl("net.ipv4.tcp_syncookies")
+	add(fmt.Sprintf("  syncookies    %s", map[string]string{"0": "off", "1": "on", "?": "?"}[syncook]), c(syncook == "1"))
+	redir := readSysctl("net.ipv4.conf.all.accept_redirects")
+	add(fmt.Sprintf("  icmp redirect %s", map[string]string{"0": "off", "1": "ON", "?": "?"}[redir]), c(redir == "0"))
+	srcr4 := readSysctl("net.ipv4.conf.all.accept_source_route")
+	add(fmt.Sprintf("  src route     %s", map[string]string{"0": "off", "1": "ON", "?": "?"}[srcr4]), c(srcr4 != "1"))
+	ts := readSysctl("net.ipv4.tcp_timestamps")
+	add(fmt.Sprintf("  timestamps    %s", map[string]string{"0": "off", "1": "on", "?": "?"}[ts]), c(ts == "0"))
+	conns := readEstablished()
+	ext := 0
+	for _, cn := range conns {
+		if !isPrivateIP(cn.Remote) {
+			ext++
+		}
+	}
+	add(fmt.Sprintf("  ext conns     %d", ext), c(ext == 0))
+	ports := readListenPorts()
+	add(fmt.Sprintf("  listen ports  %d", len(ports)), t.NET)
+	return lines
+}
+
+func secSumSandbox(vms VMStat, t *Theme, h int) []ColLine {
+	var lines []ColLine
+	add := func(text string, c Color) { addLine(&lines, h, text, c, false, false) }
+	c := func(good bool) Color {
+		if good {
+			return t.DISK
+		}
+		return t.WARN
+	}
+	add("SANDBOX", t.HDR)
+	add(fmt.Sprintf("  AppArmor      %s", map[bool]string{true: "active", false: "inactive"}[vms.AppArmor]), c(vms.AppArmor))
+	add(fmt.Sprintf("  SELinux       %s", map[bool]string{true: "enforcing", false: "inactive"}[vms.SELinux]), c(vms.SELinux))
+	fw := vms.Firewall
+	if fw == "" {
+		fw = "none"
+	}
+	add(fmt.Sprintf("  firewall      %s", fw), c(vms.Firewall != ""))
+	fjInst, fjRun := checkFirejail()
+	fjNote := fmt.Sprintf("sandboxes: %d", fjRun)
+	if !fjInst {
+		fjNote = "not installed"
+	}
+	add(fmt.Sprintf("  firejail      %s", fjNote), c(fjInst))
+	scN := countSeccompProcs()
+	add(fmt.Sprintf("  seccomp       %d procs", scN), c(scN > 0))
+	sshCfg := readSSHConfig()
+	rootLogin := sshCfg["permitrootlogin"]
+	rlNote := rootLogin
+	if rlNote == "" {
+		rlNote = "n/a"
+	}
+	add(fmt.Sprintf("  SSH root      %s", rlNote), c(rootLogin == "no" || rootLogin == ""))
+	return lines
+}
+
 func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Theme) {
-	hdr := clampStr(" SEC"+strings.Repeat("─", max(0, cols-4)), cols)
-	buf.WriteString(pos(0, 0))
-	buf.WriteString(ansiCol(t.HDR) + BOLD + hdr + RESET + CLEOL)
+	topH := 9
+	if rows < 22 {
+		topH = 5
+	}
+
+	ss.mu.RLock()
+	vms := ss.VMs
+	ss.mu.RUnlock()
+
+	sumCols := [][]ColLine{
+		secSumKernel(t, topH),
+		secSumRootkit(t, topH),
+		secSumNetwork(t, topH),
+		secSumSandbox(vms, t, topH),
+	}
+	cw := cols / 4
+	widths := []int{cw, cw, cw, cols - cw*3}
+	renderCols(buf, 0, topH, sumCols, widths, t)
+
+	detailBar := clampStr(fmt.Sprintf(" DETAIL %s", strings.Repeat("─", max(0, cols-8))), cols)
+	buf.WriteString(pos(topH, 0))
+	buf.WriteString(ansiCol(t.HDR) + BOLD + detailBar + RESET + CLEOL)
 
 	lw := cols/2 - 1
 	rw := cols - lw - 1
@@ -659,10 +801,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	warnLine := func(s string) string {
 		return fmt.Sprintf("         %s! %s%s", ansiCol(t.WARN), s, RESET)
 	}
-
-	ss.mu.RLock()
-	vms := ss.VMs
-	ss.mu.RUnlock()
 
 	// LEFT COLUMN
 
@@ -1189,15 +1327,15 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		}
 	}
 
-	displayRows := rows - 2
+	displayRows := rows - topH - 2
 	total := max(len(lbuf), len(rbuf))
 	maxScroll := max(0, total-displayRows)
 	if ui.SecScroll > maxScroll {
 		ui.SecScroll = maxScroll
 	}
 
-	div := DIM + "│" + RESET
-	renderRow := 1
+	div := ansiCol(t.HDR) + DIM + "│" + RESET
+	renderRow := topH + 1
 	for i := ui.SecScroll; i < total && renderRow < rows-1; i++ {
 		buf.WriteString(pos(renderRow, 0))
 		ls := ""
@@ -1217,6 +1355,7 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	for ; renderRow < rows-1; renderRow++ {
 		buf.WriteString(pos(renderRow, 0) + CLEOL)
 	}
+	_ = topH
 
 	drawStatusBar(buf, rows, cols, ui, ui.Interval, ss, t)
 }
