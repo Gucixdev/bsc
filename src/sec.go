@@ -1244,22 +1244,6 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	}
 
 	// cpu vulnerabilities
-	addh("cpu vulnerabilities")
-	cpuVulns := readCPUVulns()
-	if len(cpuVulns) == 0 {
-		add(ColLine{Text: "  n/a (no sysfs)", C: inf, Dim: true})
-	} else {
-		for _, v := range cpuVulns {
-			parts := strings.SplitN(v, "=", 2)
-			if len(parts) != 2 { continue }
-			name, status := parts[0], parts[1]
-			mitigated := strings.Contains(status, "Mitigation") || status == "Not affected"
-			c := ok
-			if !mitigated { c = warn }
-			addl(name, status, c)
-		}
-	}
-
 	// boot security
 	addh("boot security")
 	sb := checkSecureBoot()
@@ -1383,12 +1367,10 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 
 	// bluetooth
 	addh("bluetooth")
-	btAdapters, btPowered, btDisc := checkBluetooth()
+	btAdapters, _, btDisc := checkBluetooth()
 	if len(btAdapters) == 0 {
 		add(ColLine{Text: "  no adapter", C: inf, Dim: true})
 	} else {
-		addl("adapters", strings.Join(btAdapters, " "), inf)
-		addl("powered", map[bool]string{true:"YES",false:"no"}[btPowered], bc(!btPowered))
 		addl("discoverable", map[bool]string{true:"YES — visible!",false:"hidden"}[btDisc], bc(!btDisc))
 		btSoft, btHard := checkRfkillBT()
 		rfkNote := "not blocked"
@@ -1413,6 +1395,23 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		paired := countBTPairedDevices()
 		if paired >= 0 {
 			addl("paired devices", fmt.Sprintf("%d", paired), inf)
+		}
+	}
+
+	// cpu vulnerabilities (verbose — at end)
+	addh("cpu vulnerabilities")
+	cpuVulns := readCPUVulns()
+	if len(cpuVulns) == 0 {
+		add(ColLine{Text: "  n/a (no sysfs)", C: inf, Dim: true})
+	} else {
+		for _, v := range cpuVulns {
+			parts := strings.SplitN(v, "=", 2)
+			if len(parts) != 2 { continue }
+			name, status := parts[0], parts[1]
+			mitigated := strings.Contains(status, "Mitigation") || status == "Not affected"
+			c := ok
+			if !mitigated { c = warn }
+			addl(name, status, c)
 		}
 	}
 

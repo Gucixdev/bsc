@@ -211,19 +211,18 @@ func drawHexVRAM(buf *strings.Builder, rows, cols, paneW, sepX, dumpX, dumpW, bp
 		for r := row; r < paneH+1; r++ {
 			buf.WriteString(pos(r, 0) + CLEOL)
 		}
-		// show error in dump area
-		buf.WriteString(pos(3, dumpX))
-		buf.WriteString(warn + "cannot map VRAM BAR1:" + RESET)
-		buf.WriteString(pos(4, dumpX))
-		buf.WriteString(dim + vm.err + RESET + CLEOL)
-		if vm.pciDev != "" {
-			buf.WriteString(pos(5, dumpX))
-			buf.WriteString(dim + "pci: " + vm.pciDev + RESET + CLEOL)
-			buf.WriteString(pos(6, dumpX))
-			buf.WriteString(dim + "try: sudo chmod o+r "+vm.pciDev+"/resource1" + RESET + CLEOL)
+		r := 2
+		warnLine := func(s string) {
+			buf.WriteString(pos(r, dumpX) + s + RESET + CLEOL)
+			r++
 		}
-		// clear rest of dump pane
-		for r := 7; r < rows-2; r++ {
+		warnLine(warn + "VRAM BAR1 unavailable")
+		warnLine(dim + vm.err)
+		if vm.pciDev != "" {
+			warnLine(dim + "pci: " + vm.pciDev)
+			warnLine(dim + "sudo chmod o+r " + vm.pciDev + "/resource1")
+		}
+		for ; r < rows-2; r++ {
 			buf.WriteString(pos(r, dumpX) + CLEOL)
 		}
 		return
