@@ -2,8 +2,6 @@ package main
 
 import "time"
 
-// ── CONSTANTS ────────────────────────────────────────────────────────────────
-
 const (
 	FPS   = 30
 	HZ    = 100 // Linux USER_HZ
@@ -33,7 +31,6 @@ const (
 	RING_CAP = 200
 )
 
-// ANSI primitives — no curses
 const (
 	RESET   = "\033[0m"
 	BOLD    = "\033[1m"

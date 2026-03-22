@@ -18,14 +18,14 @@ func toggleRecording(ui *UI) {
 		}
 		return
 	}
-	dir := os.Getenv("HOME") + "/.local/share/pip-boy"
+	dir := os.Getenv("HOME") + "/.local/share/pipboy"
 	_ = os.MkdirAll(dir, 0755)
 	name := dir + "/" + time.Now().Format("20060102-150405") + ".tsv"
 	f, err := os.Create(name)
 	if err != nil {
 		return
 	}
-	fmt.Fprintf(f, "# pip-boy record — started %s\n", time.Now().Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(f, "# pipboy record — started %s\n", time.Now().Format("2006-01-02 15:04:05"))
 	fmt.Fprintf(f, "time\tpid\tcomm\tcpu%%\tmemKB\tstate\n")
 	recFile = f
 	lastRecordAt = time.Time{} // force immediate first write

@@ -27,8 +27,6 @@ func bgCol(c Color) string {
 	return bg256(16 + 36*ri + 6*gi + bi)
 }
 
-// ── COLOR SYSTEM ─────────────────────────────────────────────────────────────
-
 type Color [3]uint8
 
 type Theme struct {
@@ -44,14 +42,13 @@ var defaultTheme = Theme{
 	DISK: Color{0x00, 0xff, 0x41}, // matrix neon green
 	NET:  Color{0x00, 0x87, 0xff},
 	SEL:  Color{0xff, 0xff, 0x00},
-	USB:  Color{0x8a, 0x8a, 0x8a},
+	USB:  Color{0x77, 0x00, 0xff},
 	MARK: Color{0xff, 0x87, 0x00},
 	WARN: Color{0xff, 0x00, 0x00},
 }
 
 var truecolor bool
 
-// readXResources — runs xrdb -query, returns key→value map; nil if unavailable
 func readXResources() map[string]string {
 	if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
 		return nil
@@ -70,7 +67,6 @@ func readXResources() map[string]string {
 	return res
 }
 
-// xresColor — returns first matching hex color from XResources keys
 func xresColor(res map[string]string, keys ...string) (Color, bool) {
 	for _, k := range keys {
 		v := res[k]
@@ -89,7 +85,6 @@ func xresColor(res map[string]string, keys ...string) (Color, bool) {
 func loadTheme() Theme {
 	t := defaultTheme
 
-	// XResources: lowest priority — terminal palette overrides defaults
 	if xres := readXResources(); xres != nil {
 		if c, ok := xresColor(xres, "*.foreground", "*foreground"); ok { t.DISK = c; t.GPU = c }
 		if c, ok := xresColor(xres, "*.color1", "*.color9");        ok { t.WARN = c }
@@ -98,12 +93,11 @@ func loadTheme() Theme {
 		if c, ok := xresColor(xres, "*.color4", "*.color12");       ok { t.NET = c }
 		if c, ok := xresColor(xres, "*.color5", "*.color13");       ok { t.CPU = c }
 		if c, ok := xresColor(xres, "*.color6", "*.color14");       ok { t.ZRAM = c }
-		if c, ok := xresColor(xres, "*.color8", "*.color7");        ok { t.USB = c }
+		if c, ok := xresColor(xres, "*.color5", "*.color13");       ok { t.USB = c }
 		if c, ok := xresColor(xres, "*.color3", "*.color11");       ok { t.SEL = c; t.MARK = c }
 	}
 
-	// theme.json overrides XResources
-	path := os.Getenv("HOME") + "/.config/pip-boy/theme.json"
+	path := os.Getenv("HOME") + "/.config/pipboy/theme.json"
 	f, err := os.Open(path)
 	if err != nil {
 		return t
@@ -130,7 +124,6 @@ func loadTheme() Theme {
 	return t
 }
 
-// ansiCol → fg color escape; integer-only 256-color fallback (no math import)
 func ansiCol(c Color) string {
 	if truecolor {
 		return fgRGB(c[0], c[1], c[2])
@@ -151,8 +144,6 @@ func pctColor(pct float64, t *Theme) Color {
 	return t.DISK
 }
 
-// ── TERMINAL ─────────────────────────────────────────────────────────────────
-
 var origT syscall.Termios
 
 func rawOn() {
@@ -172,7 +163,6 @@ func rawOff() {
 	os.Stdout.WriteString(CLRSCR + HOME + SHOWCUR + RESET)
 }
 
-// winsize mirrors struct winsize from <sys/ioctl.h> — no syscall.Winsize in Go stdlib
 type winsize struct {
 	Row, Col       uint16
 	Xpixel, Ypixel uint16

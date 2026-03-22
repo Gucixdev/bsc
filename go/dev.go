@@ -212,34 +212,17 @@ func drawDEV(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 
 	// ── SYSCALL TRACE ─────────────────────────────────────────────────────────
 	if row < rows-3 {
-		ss.traceMu.Lock()
-		method := ss.traceMethod
-		ss.traceMu.Unlock()
-		if method == "" {
-			method = "/proc"
-		}
 		ncores := len(ss.Cores)
 		if ncores == 0 {
 			ncores = 1
 		}
-		ncols := 1
-		if cols >= 150 {
-			ncols = 3
-		} else if cols >= 80 {
-			ncols = 2
-		}
-		if ncols > ncores {
-			ncols = ncores
-		}
+		// min 18 cols per core: fits "clock_nanosleep×NN" without truncation
+		ncols := max(1, min(ncores, cols/18))
+		ui.TraceNCols = ncols
 		coreStart := min(ui.CoreOffset, max(0, ncores-ncols))
-		ui.CoreOffset = coreStart // normalize so ← works immediately
+		ui.CoreOffset = coreStart
 
-		coresStr := fmt.Sprintf("%d", coreStart)
-		for i := 1; i < ncols; i++ {
-			coresStr += fmt.Sprintf("-%d", coreStart+i)
-		}
-		tHdr := fmt.Sprintf("─── SYSCALL TRACE [cores %s/%d] [%s] ",
-			coresStr, ncores-1, method)
+		tHdr := "─── SYSCALL TRACE "
 		tHdr = clampStr(tHdr+strings.Repeat("─", max(0, cols-len(tHdr))), cols)
 		buf.WriteString(pos(row, 0))
 		buf.WriteString(ansiCol(t.HDR) + tHdr + RESET + CLEOL)
@@ -259,7 +242,7 @@ func drawDEV(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 			ss_ring := ss.traceRings[cpu]
 			// newest first, offset by DevScroll
 			total := len(ss_ring)
-			hdr := fmt.Sprintf(" core %d [%d]", cpu, total)
+			hdr := fmt.Sprintf(" c%d[%d]", cpu, total)
 			lines := []ColLine{{Text: hdr, C: t.CPU, Bold: true}}
 			for ri := 0; ri < traceRows-1; ri++ {
 				idx := total - 1 - (ui.DevScroll + ri)
@@ -269,7 +252,7 @@ func drawDEV(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 				e := ss_ring[idx]
 				text := e.Syscall
 				if e.Count > 1 {
-					text = fmt.Sprintf("%s ×%d", e.Syscall, e.Count)
+					text = fmt.Sprintf("%s×%d", e.Syscall, e.Count)
 				}
 				lines = append(lines, ColLine{Text: text, C: t.DISK})
 			}

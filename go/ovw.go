@@ -8,17 +8,10 @@ import (
 	"time"
 )
 
-// procPos — animated fractional row per PID; easing toward SmoothCPU rank
 var procPos = map[int]float64{}
-
-// ghostFade — frames since ghost was born (30→0); drives color transition live→blue
 var ghostFade = map[int]int{}
-
-// stickyColW — max observed width per column slot; only grows, resets on terminal resize
 var stickyColW [8]int
 var stickyTermCols int
-
-// ── DRAW HELPERS ─────────────────────────────────────────────────────────────
 
 func fmtMem(kb int) string {
 	if kb >= 1024*1024 {
@@ -41,7 +34,6 @@ func pct2(used, total int) int {
 	return p
 }
 
-// ColLine — one row in a column
 type ColLine struct {
 	Text string
 	C    Color
@@ -55,7 +47,6 @@ func addLine(lines *[]ColLine, h int, text string, c Color, dim, bold bool) {
 	}
 }
 
-// renderCols draws columns side-by-side into buf starting at row startRow
 func renderCols(buf *strings.Builder, startRow, nRows int, cols [][]ColLine, widths []int, t *Theme) {
 	for row := 0; row < nRows; row++ {
 		buf.WriteString(pos(startRow+row, 0))
@@ -99,8 +90,6 @@ func renderCols(buf *strings.Builder, startRow, nRows int, cols [][]ColLine, wid
 	}
 }
 
-// ── SPARKLINE ─────────────────────────────────────────────────────────────────
-
 const sparkChars = "▁▂▃▄▅▆▇█"
 
 func sparkline(vals []float64) string {
@@ -130,8 +119,6 @@ func sparkline(vals []float64) string {
 	}
 	return b.String()
 }
-
-// ── COLUMN BUILDERS ──────────────────────────────────────────────────────────
 
 func colCPU(cores []CoreStat, load [3]float64, raplW float64, histCPU []float64, histCores [][]float64, h int, t *Theme) []ColLine {
 	var lines []ColLine
@@ -211,7 +198,6 @@ func colRAMGPU(mem MemStat, gpu GPUStat, histGPU, histVRAM []float64, h int, t *
 	mrow("SWP", mem.SwapUsedKB, mem.SwapTotKB, mem.SwapTotKB == 0)
 	mrow("ZRM", mem.ZramUsedKB, mem.ZramTotKB, mem.ZramTotKB == 0)
 
-	// GPU section — always show something
 	switch gpu.Source {
 	case "nvidia-smi", "nvidia-proc":
 		model := gpu.Model
@@ -418,13 +404,12 @@ func connCounts() (tcp, udp, unix int) {
 	return
 }
 
-func colNet(nets []NetIface, gateway string, histNetRx, histNetTx map[string][]float64, h int, t *Theme) []ColLine {
+func colNet(nets []NetIface, gateway string, histNetRx, histNetTx map[string][]float64, h int, t *Theme, anon bool) []ColLine {
 	var lines []ColLine
 	add := func(text string, c Color, dim, bold bool) {
 		addLine(&lines, h, text, c, dim, bold)
 	}
 
-	// hostname + gateway
 	hn := ""
 	if data, err := os.ReadFile("/etc/hostname"); err == nil {
 		hn = strings.TrimSpace(string(data))
@@ -433,20 +418,18 @@ func colNet(nets []NetIface, gateway string, histNetRx, histNetTx map[string][]f
 	if gw == "" {
 		gw = "--"
 	}
-	add(fmt.Sprintf("host:%-12s gw:%s", hn, gw), t.DISK, false, false)
+	add(fmt.Sprintf("host:%-12s gw:%s", mHost(hn, anon), mIP(gw, anon)), t.DISK, false, false)
 
-	// connection counts — pure /proc
 	tcp, udp, unix := connCounts()
 	add(fmt.Sprintf("tcp:%-4d udp:%-4d unix:%d", tcp, udp, unix), t.DISK, true, false)
 
-	// DNS from /etc/resolv.conf
 	var dnsServers []string
 	if data, err := os.ReadFile("/etc/resolv.conf"); err == nil {
 		for _, line := range strings.Split(string(data), "\n") {
 			if strings.HasPrefix(line, "nameserver") {
 				fields := strings.Fields(line)
 				if len(fields) >= 2 {
-					dnsServers = append(dnsServers, fields[1])
+					dnsServers = append(dnsServers, mIP(fields[1], anon))
 				}
 			}
 		}
@@ -455,9 +438,8 @@ func colNet(nets []NetIface, gateway string, histNetRx, histNetTx map[string][]f
 		add("dns:"+strings.Join(dnsServers[:min(3, len(dnsServers))], " "), t.DISK, true, false)
 	}
 
-	// VPN detection from iface names
-	var vpnNames []string
 	vpnPfx := []string{"tun", "tap", "wg", "vpn", "ppp"}
+	var vpnNames []string
 	for _, n := range nets {
 		if !n.Up {
 			continue
@@ -468,7 +450,7 @@ func colNet(nets []NetIface, gateway string, histNetRx, histNetTx map[string][]f
 				if ip == "" {
 					ip = "?"
 				}
-				vpnNames = append(vpnNames, n.Name+"("+ip+")")
+				vpnNames = append(vpnNames, n.Name+"("+mIP(ip, anon)+")")
 				break
 			}
 		}
@@ -477,7 +459,6 @@ func colNet(nets []NetIface, gateway string, histNetRx, histNetTx map[string][]f
 		add("VPN: "+strings.Join(vpnNames, " "), t.DISK, false, false)
 	}
 
-	// per-interface
 	for _, n := range nets {
 		isVPN := false
 		for _, p := range vpnPfx {
@@ -500,7 +481,7 @@ func colNet(nets []NetIface, gateway string, histNetRx, histNetTx map[string][]f
 		if ip == "" {
 			ip = "--"
 		}
-		add(fmt.Sprintf("%-10s %s %s  %s/%d", n.Name, itype, upS, ip, n.Prefix),
+		add(fmt.Sprintf("%-10s %s %s  %s/%d", n.Name, itype, upS, mIP(ip, anon), n.Prefix),
 			t.DISK, !n.Up, false)
 		if n.Up {
 			add(fmt.Sprintf("  tx%5s/s  rx%5s/s", fmtBps(n.TxBps), fmtBps(n.RxBps)),
@@ -508,27 +489,26 @@ func colNet(nets []NetIface, gateway string, histNetRx, histNetTx map[string][]f
 			add(sparkline(histNetTx[n.Name])+" "+sparkline(histNetRx[n.Name]), t.DISK, true, false)
 		}
 		if n.MAC != "" {
-			add("  mac:"+n.MAC, t.DISK, true, false)
+			add("  mac:"+mMAC(n.MAC, anon), t.DISK, true, false)
 		}
 		if n.SSID != "" {
 			sig := ""
-			if n.Signal != 0 {
+			if n.Signal != 0 && !anon {
 				sig = fmt.Sprintf("  %ddBm", n.Signal)
 			}
-			add("  SSID: "+n.SSID+sig, t.DISK, !n.Up, false)
+			add("  SSID: "+mStr(n.SSID, anon)+sig, t.DISK, !n.Up, false)
 		}
 	}
 
-	// Bluetooth — /sys/class/bluetooth/ (no tools)
 	btEntries, _ := os.ReadDir("/sys/class/bluetooth")
 	if len(btEntries) > 0 {
 		var btNames []string
 		for _, e := range btEntries {
 			btNames = append(btNames, e.Name())
 		}
-		add("Bluetooth: "+strings.Join(btNames, " "), t.DISK, true, false) // present but passive → dim green
+		add("Bluetooth: "+strings.Join(btNames, " "), t.DISK, true, false)
 	} else {
-		add("Bluetooth N/A", t.WARN, false, false) // no hardware → red
+		add("Bluetooth N/A", t.WARN, false, false)
 	}
 
 	return lines
@@ -574,7 +554,6 @@ func colVMs(vms VMStat, histVMsRun, histQEMURun, histVBoxRun, histVMwRun, histDo
 		addLine(&lines, h, text, c, dim, bold)
 	}
 
-	// KVM status line
 	kvmS := "no /dev/kvm"
 	kvmOk := false
 	if vms.KVMExists {
@@ -667,7 +646,6 @@ func colVMs(vms VMStat, histVMsRun, histQEMURun, histVBoxRun, histVMwRun, histDo
 		}
 	}
 
-	// Bubblewrap
 	if len(lines) < h {
 		if vms.BwrapInst {
 			add(fmt.Sprintf("Bubblewrap: %d", vms.BwrapCount), t.DISK, vms.BwrapCount == 0, false)
@@ -676,7 +654,6 @@ func colVMs(vms VMStat, histVMsRun, histQEMURun, histVBoxRun, histVMwRun, histDo
 		}
 	}
 
-	// Firewall
 	if len(lines) < h {
 		if vms.Firewall != "" {
 			add("Firewall: "+vms.Firewall, t.DISK, false, false)
@@ -685,7 +662,6 @@ func colVMs(vms VMStat, histVMsRun, histQEMURun, histVBoxRun, histVMwRun, histDo
 		}
 	}
 
-	// Sandbox (AppArmor/SELinux)
 	if len(lines) < h {
 		sb := ""
 		if vms.AppArmor {
@@ -710,7 +686,6 @@ func colVMs(vms VMStat, histVMsRun, histQEMURun, histVBoxRun, histVMwRun, histDo
 
 func colCPURAMGPU(cores []CoreStat, load [3]float64, raplW float64, mem MemStat, gpu GPUStat, histCPU, histGPU, histVRAM []float64, histCores [][]float64, h int, t *Theme) []ColLine {
 	cpu := colCPU(cores, load, raplW, histCPU, histCores, h, t)
-	// 2 blank separator rows between CPU block and RAM/GPU block
 	sep := []ColLine{{}, {}}
 	ram := colRAMGPU(mem, gpu, histGPU, histVRAM, h-len(cpu)-len(sep), t)
 	return append(append(cpu, sep...), ram...)
@@ -725,8 +700,6 @@ func colHooks(hooks []string, h int, t *Theme) []ColLine {
 	}
 	return lines
 }
-
-// ── DRAW OVW ─────────────────────────────────────────────────────────────────
 
 func filterProcs(procs []ProcStat, filter string) []ProcStat {
 	out := procs[:0:len(procs)]
@@ -772,8 +745,6 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 		topH = 22
 	}
 
-	// section-based layout: cpurg|disk|net|audusb|vms|hooks
-	// min widths: 28|32|44|28|22|18 = 172 total
 	type section struct {
 		name string
 		data []ColLine
@@ -782,7 +753,7 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 	all := []section{
 		{"cpurg",  colCPURAMGPU(cores, load, raplW, mem, gpu, histCPU, histGPU, histVRAM, histCores, topH, t), 28},
 		{"disk",   colDisk(disks, histDiskR, histDiskW, topH, t),                                              32},
-		{"net",    colNet(nets, gateway, histNetRx, histNetTx, topH, t),                                       44},
+		{"net",    colNet(nets, gateway, histNetRx, histNetTx, topH, t, ui.Anon),                             44},
 		{"audusb", colAudioUSB(audio, usb, ss.Removable, histDiskR, histDiskW, topH, t),                      28},
 		{"vms",    colVMs(vms, histVMsRun, histQEMURun, histVBoxRun, histVMwRun, histDockRun, histPodRun, topH, t), 22},
 		{"hooks",  colHooks(ss.Hooks, topH, t),                                                                18},
@@ -808,13 +779,11 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 
 	n := len(chosen)
 
-	// reset sticky widths on terminal resize
 	if cols != stickyTermCols {
 		stickyColW = [8]int{}
 		stickyTermCols = cols
 	}
 
-	// compute natural widths from content, grow sticky cache, never shrink
 	colWidths := make([]int, n)
 	total := 0
 	for i, s := range chosen {
@@ -830,7 +799,6 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 		colWidths[i] = stickyColW[i]
 		total += colWidths[i]
 	}
-	// distribute any remaining terminal space into the widest elastic column
 	if remainder := cols - total; remainder > 0 {
 		for _, expandName := range []string{"hooks", "net", "disk"} {
 			for i, s := range chosen {
@@ -853,17 +821,13 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 
 	renderCols(buf, 0, topH, colData, colWidths, t)
 
-	// proc section
 	procs := filterProcs(allProcs, ui.Filter)
-
-	// sort by EMA-smoothed CPU (or MEM)
 	if ui.Sort == SORT_MEM {
 		sort.Slice(procs, func(i, j int) bool { return procs[i].MemKB > procs[j].MemKB })
 	} else {
 		sort.Slice(procs, func(i, j int) bool { return procs[i].SmoothCPU > procs[j].SmoothCPU })
 	}
 
-	// easing: procPos drifts toward SmoothCPU rank
 	targetRank := make(map[int]int, len(procs))
 	for i, p := range procs {
 		targetRank[p.PID] = i
@@ -876,7 +840,6 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 		}
 	}
 
-	// display order follows animated position
 	sort.SliceStable(procs, func(i, j int) bool {
 		return procPos[procs[i].PID] < procPos[procs[j].PID]
 	})
@@ -920,11 +883,10 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 		avail = 0
 	}
 
-	// build combined display list: live procs + ghosts (dead, dim, at bottom)
 	type displayProc struct {
 		ProcStat
-		ghost bool // dead process (TTL ghost at bottom)
-		sep   bool // blank separator row (Tab key)
+		ghost bool
+		sep   bool
 	}
 	display := make([]displayProc, 0, len(procs))
 	for _, p := range procs {
@@ -933,7 +895,6 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 			display = append(display, displayProc{sep: true})
 		}
 	}
-	// collect ghosts into sorted slice (most recently dead first)
 	type ghostRow struct {
 		p      ProcStat
 		diedAt time.Time
@@ -941,7 +902,6 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 	var ghostList []ghostRow
 	ss.mu.RLock()
 	for pid, g := range ss.Ghosts {
-		// seed ghostFade for newly seen ghosts (first render after death)
 		if _, known := ghostFade[pid]; !known {
 			ghostFade[pid] = 30
 		}
@@ -968,7 +928,6 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 		}
 	}
 	ss.mu.RUnlock()
-	// tick ghostFade; remove PIDs that are no longer ghosts
 	for pid, f := range ghostFade {
 		ss.mu.RLock()
 		_, stillGhost := ss.Ghosts[pid]
@@ -986,7 +945,6 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 		display = append(display, displayProc{ProcStat: gr.p, ghost: true})
 	}
 
-	// re-anchor cursor PID after list is finalized
 	if ui.SelPID > 0 {
 		for i, dp := range display {
 			if dp.PID == ui.SelPID {
@@ -1001,7 +959,6 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 		ui.SelPID = display[ui.Sel].PID
 	}
 
-	// clamp scroll + sel
 	if ui.Scroll < 0 {
 		ui.Scroll = 0
 	}
@@ -1014,7 +971,6 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 	if ui.Sel >= len(display) && len(display) > 0 {
 		ui.Sel = len(display) - 1
 	}
-	// auto-scroll to keep sel visible
 	if ui.Sel < ui.Scroll {
 		ui.Scroll = ui.Sel
 	}
@@ -1027,7 +983,6 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 		end = len(display)
 	}
 
-	// measure column widths from visible rows
 	wPID, wCPU, wMEM := len("PID"), len("CPU%"), len("MEM")
 	for _, dp := range display[ui.Scroll:end] {
 		if dp.sep { continue }
@@ -1039,7 +994,6 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 	}
 	ui_ := DIM + ansiCol(t.USB) + "│" + RESET // separator shorthand
 
-	// header
 	hdrLine2 := fmt.Sprintf("   %-*s %s %-*s %s %-*s %s T %s CMD",
 		wPID, "PID", ui_, wCPU, "CPU%", ui_, wMEM, "MEM", ui_, ui_)
 	buf.WriteString(pos(topH+1, 0))
@@ -1103,12 +1057,14 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 		if dp.ghost {
 			cpuStr = fmt.Sprintf("%*s", wCPU, "--")
 		}
-		// layout per row (all fixed-width): moveC(1)+markC(1)+sp+PID(wPID)+sp │ sp+cpu(wCPU)+sp │ sp+mem(wMEM)+sp │ sp+T+sp │ sp+cmd
 		cmdW := cols - wPID - wCPU - wMEM - 16
 		if cmdW < 0 {
 			cmdW = 0
 		}
 		cmd := p.Cmd
+		if ui.Anon && !isKern {
+			cmd = "[" + p.Comm + "]"
+		}
 		if len([]rune(cmd)) > cmdW {
 			cmd = string([]rune(cmd)[:cmdW])
 		}
@@ -1126,13 +1082,11 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 		buf.WriteString(RESET)
 	}
 
-	// clear remaining rows in proc section
 	for i := end - ui.Scroll; i < avail; i++ {
 		buf.WriteString(pos(listStart+i, 0))
 		buf.WriteString(CLEOL)
 	}
 
-	// hints row
 	drawHints(buf, rows-2, cols, ui, t)
 
 	drawStatusBar(buf, rows, cols, ui, ui.Interval, ss, t)

@@ -57,7 +57,6 @@ func readCPU() ([]CoreStat, [3]float64, float64) {
 	}
 	prevCPURaw = cur
 
-	// coretemp hwmon
 	temps := map[int]int{}
 	hwdir, _ := os.ReadDir("/sys/class/hwmon")
 	for _, hw := range hwdir {
@@ -143,7 +142,7 @@ func readCPU() ([]CoreStat, [3]float64, float64) {
 		}
 	}
 
-	// RAPL power — ujoules delta / dt / 1e6 = watts
+	// RAPL: ujoules delta / dt / 1e6 = watts
 	var raplW float64
 	if data, err := os.ReadFile("/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj"); err == nil {
 		uj, _ := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
@@ -278,7 +277,6 @@ func readProcs() ([]ProcStat, map[string]int) {
 			cmd = "[" + comm + "]"
 		}
 
-		// uid from status — only read Uid line
 		var uid int
 		if statusData, err := os.ReadFile("/proc/" + name + "/status"); err == nil {
 			for _, l := range strings.SplitN(string(statusData), "\n", 50) {

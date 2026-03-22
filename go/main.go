@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-// ── MAIN LOOP ────────────────────────────────────────────────────────────────
-
 var collectIntervalNs atomic.Int64
 
 var (
@@ -66,7 +64,7 @@ func collectAll(ss *SysState) {
 		lastHookT = time.Now()
 	}
 
-	// smooth CPU values: EMA α=0.5 so sort order stabilises over ~2 ticks
+	// EMA α=0.5 stabilises sort order over ~2 ticks
 	if cpuSmooth == nil {
 		cpuSmooth = make(map[int]float64, len(procs))
 	}
@@ -76,7 +74,6 @@ func collectAll(ss *SysState) {
 		cpuSmooth[pid] = procs[i].SmoothCPU
 	}
 
-	// ghost tracking: diff old PIDs against new procs
 	now := time.Now()
 	newPIDs := make(map[int]bool, len(procs))
 	for _, p := range procs {
@@ -87,7 +84,6 @@ func collectAll(ss *SysState) {
 	if ss.Ghosts == nil {
 		ss.Ghosts = map[int]GhostProc{}
 	}
-	// newly dead → become ghosts
 	for pid, ps := range prevPIDs {
 		if !newPIDs[pid] {
 			if _, alreadyGhost := ss.Ghosts[pid]; !alreadyGhost {
@@ -95,13 +91,11 @@ func collectAll(ss *SysState) {
 			}
 		}
 	}
-	// expire old ghosts; revive if PID came back
 	for pid := range ss.Ghosts {
 		if newPIDs[pid] || time.Since(ss.Ghosts[pid].DiedAt) > GHOST_TTL {
 			delete(ss.Ghosts, pid)
 		}
 	}
-	// update prev snapshot
 	prevPIDs = make(map[int]ProcStat, len(procs))
 	for _, p := range procs {
 		prevPIDs[p.PID] = p
@@ -142,7 +136,6 @@ func collectAll(ss *SysState) {
 		ss.Hooks = hooks
 	}
 
-	// push history ring buffers
 	avgCPU := 0.0
 	for _, c := range cores {
 		avgCPU += c.Pct
@@ -159,7 +152,6 @@ func collectAll(ss *SysState) {
 	ss.HistVRAM = appendHist(ss.HistVRAM, vramPct)
 	ss.HistGPU = appendHist(ss.HistGPU, float64(gpu.Util))
 
-	// per-core history — reallocate if core count changed
 	if len(ss.HistCores) != len(cores) {
 		ss.HistCores = make([][]float64, len(cores))
 	}
@@ -190,7 +182,6 @@ func collectAll(ss *SysState) {
 		ss.HistDiskW[d.Dev] = appendHist(ss.HistDiskW[d.Dev], d.WriteBps)
 	}
 
-	// ctx switch rate
 	ctxSwTotal := readCtxSwTotal()
 	ctxSwRate := ctxSwTotal - prevCtxSwCollect
 	if ctxSwRate < 0 {
@@ -199,7 +190,6 @@ func collectAll(ss *SysState) {
 	prevCtxSwCollect = ctxSwTotal
 	ss.HistCtxSw = appendHist(ss.HistCtxSw, float64(ctxSwRate))
 
-	// running VMs per type (ss.VMs may be from last TTL cycle — fine)
 	countRun := func(vms []VMInfo) float64 {
 		n := 0
 		for _, v := range vms {
@@ -303,7 +293,6 @@ func sendSignal(ss *SysState, ui *UI, sig syscall.Signal) {
 }
 
 func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
-	// hex search mode eats printable chars
 	if ui.Tab == TAB_HEX && ui.HexSearchMode {
 		switch b {
 		case '\033':
@@ -325,7 +314,6 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 		}
 		return false
 	}
-	// OVW search mode eats printable chars
 	if ui.Tab == TAB_OVW && ui.SearchMode {
 		switch b {
 		case '\033':
@@ -347,7 +335,7 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 	}
 
 	switch b {
-	case 17: // Ctrl+Q
+	case 17: // ^Q
 		return true
 	case '1':
 		ui.Tab = TAB_OVW
@@ -408,7 +396,7 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 		if ui.Tab == TAB_HEX {
 			ui.NetLock = !ui.NetLock
 		} else if ui.Tab == TAB_DEV {
-			ui.CoreOffset++
+			ui.CoreOffset += max(1, ui.TraceNCols)
 		}
 	case 'h':
 		if ui.Tab == TAB_HEX && ui.HexSource == HEX_MEM {
@@ -421,8 +409,11 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 				}
 			}
 		} else if ui.Tab == TAB_DEV {
-			if ui.CoreOffset > 0 {
-				ui.CoreOffset--
+			step := max(1, ui.TraceNCols)
+			if ui.CoreOffset >= step {
+				ui.CoreOffset -= step
+			} else {
+				ui.CoreOffset = 0
 			}
 		}
 	case 's':
@@ -484,6 +475,10 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 			if ui.DevScroll > 0 {
 				ui.DevScroll--
 			}
+		case TAB_SEC:
+			if ui.SecScroll > 0 {
+				ui.SecScroll--
+			}
 		}
 	case 'o':
 		switch ui.Tab {
@@ -491,6 +486,8 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 			ui.NetScroll++
 		case TAB_DEV:
 			ui.DevScroll++
+		case TAB_SEC:
+			ui.SecScroll++
 		}
 	case 'y':
 		if ui.Tab == TAB_OVW && ui.SelPID != 0 {
@@ -507,6 +504,8 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 			}
 			ss.mu.RUnlock()
 		}
+	case 'a':
+		ui.Anon = !ui.Anon
 	case 'f':
 		if ui.Tab == TAB_OVW {
 			ui.Frozen = !ui.Frozen
@@ -557,7 +556,6 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 	if len(seq) == 0 {
 		return
 	}
-	// Shift+Tab = ESC [ Z
 	if len(seq) == 2 && seq[0] == '[' && seq[1] == 'Z' {
 		ui.Tab = (ui.Tab + 3) % 4 // prev tab
 		return
@@ -566,7 +564,7 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 		return
 	}
 	switch {
-	case seq[1] == 'A': // up arrow
+	case seq[1] == 'A':
 		switch ui.Tab {
 		case TAB_OVW:
 			ui.SelDelta--
@@ -578,8 +576,12 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 			if ui.DevScroll > 0 {
 				ui.DevScroll--
 			}
+		case TAB_SEC:
+			if ui.SecScroll > 0 {
+				ui.SecScroll--
+			}
 		}
-	case seq[1] == 'B': // down arrow
+	case seq[1] == 'B':
 		switch ui.Tab {
 		case TAB_OVW:
 			ui.SelDelta++
@@ -587,8 +589,9 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 			ui.HexScroll++
 		case TAB_DEV:
 			ui.DevScroll++
+		case TAB_SEC:
+			ui.SecScroll++
 		}
-	// Shift+Up / Shift+Down — fast scroll (×5)
 	case len(seq) == 5 && seq[1] == '1' && seq[2] == ';' && seq[3] == '2' && seq[4] == 'A':
 		switch ui.Tab {
 		case TAB_OVW:
@@ -607,7 +610,7 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 		case TAB_DEV:
 			ui.DevScroll += 5
 		}
-	case seq[1] == 'C': // right arrow
+	case seq[1] == 'C':
 		switch ui.Tab {
 		case TAB_OVW:
 			cycleFilter(ui, +1)
@@ -620,9 +623,9 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 			}
 			ui.HexScroll = 0
 		case TAB_DEV:
-			ui.CoreOffset++
+			ui.CoreOffset += max(1, ui.TraceNCols)
 		}
-	case seq[1] == 'D': // left arrow
+	case seq[1] == 'D':
 		switch ui.Tab {
 		case TAB_OVW:
 			cycleFilter(ui, -1)
@@ -639,11 +642,14 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 			}
 			ui.HexScroll = 0
 		case TAB_DEV:
-			if ui.CoreOffset > 0 {
-				ui.CoreOffset--
+			step := max(1, ui.TraceNCols)
+			if ui.CoreOffset >= step {
+				ui.CoreOffset -= step
+			} else {
+				ui.CoreOffset = 0
 			}
 		}
-	case len(seq) >= 3 && seq[1] == '5' && seq[2] == '~': // PageUp
+	case len(seq) >= 3 && seq[1] == '5' && seq[2] == '~':
 		switch ui.Tab {
 		case TAB_OVW:
 			ui.SelDelta -= 10
@@ -660,7 +666,7 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 				ui.DevScroll = 0
 			}
 		}
-	case len(seq) >= 3 && seq[1] == '6' && seq[2] == '~': // PageDown
+	case len(seq) >= 3 && seq[1] == '6' && seq[2] == '~':
 		switch ui.Tab {
 		case TAB_OVW:
 			ui.SelDelta += 10
@@ -673,7 +679,6 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 }
 
 func clipCopy(s string) {
-	// pipe text to xclip/xsel via stdin — best effort
 	for _, args := range [][]string{
 		{"xclip", "-selection", "clipboard"},
 		{"xsel", "--clipboard", "--input"},
@@ -725,7 +730,6 @@ func main() {
 
 	startTrace(ss)
 
-	// collector goroutine — runs independently, interval via atomic
 	go func() {
 		collectAll(ss)
 		for {
@@ -734,7 +738,6 @@ func main() {
 		}
 	}()
 
-	// input reader goroutine
 	inputCh := make(chan byte, 64)
 	go func() {
 		buf := make([]byte, 32)
@@ -746,7 +749,6 @@ func main() {
 		}
 	}()
 
-	// initial render after short wait for first collect
 	time.Sleep(50 * time.Millisecond)
 	render(ss, ui, &theme)
 

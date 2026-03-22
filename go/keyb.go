@@ -15,9 +15,8 @@ func drawHints(buf *strings.Builder, row, cols int, ui *UI, t *Theme) {
 		sb.WriteString(ansiCol(t.DISK) + "■" + RESET + dim + "=ok  " + RESET)
 		sb.WriteString(ansiCol(t.USB) + "■" + DIM + "=kern" + RESET)
 	case TAB_DEV:
-		// mem map inline labels are self-explanatory; warn color = missing flag
-		sb.WriteString(dim + " warn=missing CPU flag  " + RESET)
-		sb.WriteString(ansiCol(t.WARN) + "■" + RESET + dim + "=IRQ spike  " + RESET)
+		sb.WriteString(dim + " ←→=cores  ↑↓=history  " + RESET)
+		sb.WriteString(ansiCol(t.WARN) + "■" + RESET + dim + "=IRQ/miss  " + RESET)
 		sb.WriteString(ansiCol(t.DISK) + "■" + RESET + dim + "=normal" + RESET)
 }
 

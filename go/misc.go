@@ -12,6 +12,34 @@ import (
 	"time"
 )
 
+func mStr(s string, anon bool) string {
+	if !anon {
+		return s
+	}
+	return "[***]"
+}
+
+func mIP(s string, anon bool) string {
+	if !anon || s == "" || s == "--" || s == "?" {
+		return s
+	}
+	return "*.*.*.*"
+}
+
+func mMAC(s string, anon bool) string {
+	if !anon || s == "" {
+		return s
+	}
+	return "**:**:**:**:**:**"
+}
+
+func mHost(s string, anon bool) string {
+	if !anon || s == "" {
+		return s
+	}
+	return "***"
+}
+
 func fmtKB(kb int64) string {
 	if kb >= 1<<20 {
 		return fmt.Sprintf("%dG", kb>>20)
@@ -22,7 +50,6 @@ func fmtKB(kb int64) string {
 	return fmt.Sprintf("%dK", kb)
 }
 
-// disasmAtRIP — reads 96 bytes from /proc/PID/mem at rip, disassembles via ndisasm/objdump/hex fallback
 func disasmAtRIP(pid int, ripHex string, maxLines int) []string {
 	rip, err := strconv.ParseInt(strings.TrimPrefix(ripHex, "0x"), 16, 64)
 	if err != nil {
@@ -60,7 +87,7 @@ func disasmAtRIP(pid int, ripHex string, maxLines int) []string {
 	}
 
 	if _, err := exec.LookPath("objdump"); err == nil {
-		tmp, err := os.CreateTemp("", "pip-boy_asm")
+		tmp, err := os.CreateTemp("", "pipboy_asm")
 		if err == nil {
 			tmp.Write(bs)
 			tmp.Close()
@@ -88,7 +115,6 @@ func disasmAtRIP(pid int, ripHex string, maxLines int) []string {
 		}
 	}
 
-	// raw hex fallback
 	var lines []string
 	for i := 0; i < len(bs) && i < 48; i += 8 {
 		end := i + 8
@@ -111,11 +137,9 @@ func runCmd(d time.Duration, name string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// readAudio — ALSA native + PipeWire + PulseAudio + JACK (TTL in collectAll)
 func readAudio() []AudioServer {
 	var servers []AudioServer
 
-	// ALSA — always, zero tools
 	alsa := AudioServer{Name: "ALSA"}
 	if entries, err := os.ReadDir("/proc/asound"); err == nil {
 		for _, e := range entries {
@@ -127,7 +151,6 @@ func readAudio() []AudioServer {
 	}
 	servers = append(servers, alsa)
 
-	// PipeWire
 	pw := AudioServer{Name: "PipeWire"}
 	pwOut := runCmd(3*time.Second, "pw-dump")
 	if pwOut != "" {
@@ -136,7 +159,6 @@ func readAudio() []AudioServer {
 		count := strings.Count(pwOut, `"type":"PipeWire:Interface:Node"`)
 		pw.Lines = append(pw.Lines, fmt.Sprintf("nodes:%d", count))
 	} else {
-		// fallback wpctl
 		vol := runCmd(time.Second, "wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@")
 		if vol != "" {
 			pw.Active = true
@@ -145,7 +167,6 @@ func readAudio() []AudioServer {
 	}
 	servers = append(servers, pw)
 
-	// PulseAudio
 	pa := AudioServer{Name: "PulseAudio"}
 	paInfo := runCmd(2*time.Second, "pactl", "info")
 	if paInfo != "" {
@@ -157,7 +178,6 @@ func readAudio() []AudioServer {
 	}
 	servers = append(servers, pa)
 
-	// JACK
 	jack := AudioServer{Name: "JACK"}
 	jackOut := runCmd(time.Second, "jack_lsp")
 	if jackOut != "" {
@@ -169,7 +189,6 @@ func readAudio() []AudioServer {
 	return servers
 }
 
-// readUSB — /sys/bus/usb/devices product + manufacturer
 func readUSB() []string {
 	seen := map[string]bool{}
 	var result []string
@@ -195,13 +214,11 @@ func readUSB() []string {
 	return result
 }
 
-// hasBin — check if binary is in PATH
 func hasBin(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
 }
 
-// procRssKB — RSS memory from /proc/PID/status
 func procRssKB(pid string) int {
 	data, _ := os.ReadFile("/proc/" + pid + "/status")
 	for _, line := range strings.Split(string(data), "\n") {
@@ -216,15 +233,12 @@ func procRssKB(pid string) int {
 	return 0
 }
 
-// readVMs — QEMU/docker/podman/VBox/VMware scan (TTL in collectAll)
 func readVMs() VMStat {
 	v := VMStat{}
 
-	// KVM
 	if _, err := os.Stat("/dev/kvm"); err == nil {
 		v.KVMExists = true
 	}
-	// CPU vendor from cpuinfo
 	if data, err := os.ReadFile("/proc/cpuinfo"); err == nil {
 		for _, line := range strings.Split(string(data), "\n") {
 			if strings.HasPrefix(line, "flags") || strings.HasPrefix(line, "Features") {
@@ -245,7 +259,6 @@ func readVMs() VMStat {
 	v.PodmanInst = hasBin("podman")
 	v.BwrapInst = hasBin("bwrap")
 
-	// scan /proc for QEMU, VBox, VMware running instances
 	procs, _ := os.ReadDir("/proc")
 	for _, e := range procs {
 		pid := e.Name()
@@ -257,7 +270,7 @@ func readVMs() VMStat {
 		args := strings.Split(cmdline, "\x00")
 
 		if strings.Contains(cmdline, "qemu-system") {
-			name := pid // fallback: PID
+			name := pid
 			for i, a := range args {
 				if a == "-name" && i+1 < len(args) {
 					n := args[i+1]
@@ -282,7 +295,6 @@ func readVMs() VMStat {
 		comm, _ := os.ReadFile("/proc/" + pid + "/comm")
 		cs := strings.TrimSpace(string(comm))
 		if strings.Contains(cs, "VBoxHeadless") {
-			// try to get VM name from cmdline
 			name := pid
 			for i, a := range args {
 				if (a == "--startvm" || a == "-startvm") && i+1 < len(args) {
@@ -293,7 +305,6 @@ func readVMs() VMStat {
 			v.VBoxVMs = append(v.VBoxVMs, VMInfo{Name: name, Status: "run"})
 		}
 		if strings.Contains(cs, "vmware-vmx") {
-			// vmx file path is last meaningful arg
 			name := pid
 			for i := len(args) - 1; i >= 0; i-- {
 				if strings.HasSuffix(args[i], ".vmx") {
@@ -309,7 +320,6 @@ func readVMs() VMStat {
 		}
 	}
 
-	// docker containers
 	if v.DockerInst {
 		dout := runCmd(2*time.Second, "docker", "ps", "-a",
 			"--format", "{{.Names}}\t{{.Status}}\t{{.ID}}")
@@ -335,7 +345,6 @@ func readVMs() VMStat {
 		}
 	}
 
-	// podman containers
 	if v.PodmanInst {
 		pout := runCmd(2*time.Second, "podman", "ps", "-a",
 			"--format", "{{.Names}}\t{{.Status}}\t{{.ID}}")
@@ -361,7 +370,6 @@ func readVMs() VMStat {
 		}
 	}
 
-	// firewall
 	if _, err := os.Stat("/proc/net/nf_conntrack_stat"); err == nil {
 		v.Firewall = "iptables/nftables"
 	}
@@ -371,7 +379,6 @@ func readVMs() VMStat {
 		}
 	}
 
-	// sandbox / security
 	if _, err := os.Stat("/sys/kernel/security/apparmor"); err == nil {
 		v.AppArmor = true
 	}
@@ -382,9 +389,8 @@ func readVMs() VMStat {
 	return v
 }
 
-// readHooks — ~/.config/pip-boy/hooks/* exec (TTL in collectAll)
 func readHooks() []string {
-	dir := os.Getenv("HOME") + "/.config/pip-boy/hooks"
+	dir := os.Getenv("HOME") + "/.config/pipboy/hooks"
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
@@ -402,7 +408,6 @@ func readHooks() []string {
 	return result
 }
 
-// readBattery — /sys/class/power_supply
 func readBattery() BattInfo {
 	entries, _ := os.ReadDir("/sys/class/power_supply")
 	for _, e := range entries {
@@ -420,12 +425,10 @@ func readBattery() BattInfo {
 			b.Charging = s == "Charging"
 			b.Full = s == "Full"
 		}
-		// power in µW
 		if v, err := os.ReadFile(base + "/power_now"); err == nil {
 			uw, _ := strconv.ParseFloat(strings.TrimSpace(string(v)), 64)
 			b.Watts = uw / 1e6
 		} else {
-			// current_now (µA) * voltage_now (µV) / 1e12
 			ia, _ := os.ReadFile(base + "/current_now")
 			va, _ := os.ReadFile(base + "/voltage_now")
 			if len(ia) > 0 && len(va) > 0 {
@@ -439,7 +442,6 @@ func readBattery() BattInfo {
 	return BattInfo{}
 }
 
-// readUptime — /proc/uptime → seconds
 func readUptime() int64 {
 	v, err := os.ReadFile("/proc/uptime")
 	if err != nil {

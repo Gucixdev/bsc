@@ -20,9 +20,12 @@ func fmtUptime(secs int64) string {
 }
 
 func drawStatusBar(buf *strings.Builder, rows, cols int, ui *UI, interval time.Duration, ss *SysState, t *Theme) {
-	global := "q Tab=cycle +/-=ms R=rec"
+	global := "q Tab=cycle +/-=ms R=rec a=anon"
 	if ui.Recording {
 		global += " [REC]"
+	}
+	if ui.Anon {
+		global += " [ANON]"
 	}
 	var local string
 	switch ui.Tab {

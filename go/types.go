@@ -5,8 +5,6 @@ import (
 	"time"
 )
 
-// ── TYPES ────────────────────────────────────────────────────────────────────
-
 type CoreStat struct {
 	Pct      float64
 	FreqMHz  int
@@ -32,7 +30,6 @@ type ProcStat struct {
 	State     string
 }
 
-// GhostProc — a dead process kept visible for GHOST_TTL seconds
 type GhostProc struct {
 	ProcStat
 	DiedAt time.Time
@@ -148,10 +145,9 @@ type TraceEntry struct {
 
 const histLen = 30
 
-// SysState — collected data; mu protects all fields
 type SysState struct {
 	mu          sync.RWMutex
-	Ghosts      map[int]GhostProc // pid → ghost; decays after GHOST_TTL
+	Ghosts      map[int]GhostProc
 	Cores       []CoreStat
 	Load        [3]float64
 	RaplW       float64
@@ -170,22 +166,21 @@ type SysState struct {
 	Battery     BattInfo
 	Uptime      int64
 	IRQs        []IRQDelta
-	// history ring buffers — appended every collect tick, trimmed to histLen
-	HistCPU   []float64
-	HistGPU   []float64
-	HistVRAM  []float64            // VRAM used %
-	HistNetRx map[string][]float64 // per-iface rx bps
-	HistNetTx map[string][]float64 // per-iface tx bps
-	HistDiskR map[string][]float64 // per-dev read bps (fixed + removable)
-	HistDiskW map[string][]float64 // per-dev write bps (fixed + removable)
-	HistCtxSw    []float64   // context switches/s
-	HistVMsRun   []float64   // total running VMs (all types)
-	HistQEMURun  []float64   // running QEMU VMs
-	HistVBoxRun  []float64   // running VirtualBox VMs
-	HistVMwRun   []float64   // running VMware VMs
-	HistDockRun  []float64   // running Docker containers
-	HistPodRun   []float64   // running Podman containers
-	HistCores    [][]float64 // per-core CPU % history
+	HistCPU      []float64
+	HistGPU      []float64
+	HistVRAM     []float64
+	HistNetRx    map[string][]float64
+	HistNetTx    map[string][]float64
+	HistDiskR    map[string][]float64
+	HistDiskW    map[string][]float64
+	HistCtxSw    []float64
+	HistVMsRun   []float64
+	HistQEMURun  []float64
+	HistVBoxRun  []float64
+	HistVMwRun   []float64
+	HistDockRun  []float64
+	HistPodRun   []float64
+	HistCores    [][]float64
 
 	HexNetBufs  map[string][]byte
 	NetCapMu    sync.Mutex
@@ -194,17 +189,17 @@ type SysState struct {
 	traceMethod string
 }
 
-// UI — only touched by main goroutine (no mutex needed)
 type UI struct {
 	Tab          int
 	Interval     time.Duration
-	Sel          int    // last-rendered index in visible proc list
-	SelPID       int    // PID of selected proc; Sel re-anchors to this each frame
-	SelDelta     int    // pending relative movement from key presses
+	Sel          int
+	SelPID       int
+	SelDelta     int
 	Scroll       int
 	Sort         string
-	Filter       string // user | root | kern | all
+	Filter       string
 	CoreOffset   int
+	TraceNCols   int // set by drawDEV; used by key handler for page jumps
 	HexSource    int
 	HexScroll    int
 	HexPID       int
@@ -213,21 +208,23 @@ type UI struct {
 	DetailPID    int
 	DetailTab    int
 	DetailScroll int
-	Recording      bool
-	NetScroll      int
-	DevScroll      int
-	Search         string
-	SearchMode     bool
-	HexSel         int    // selected disk or iface index
-	HexRegion      int    // selected memory region index
-	HexRegScroll   int    // scroll of region list on left pane
-	NetLock        bool   // auto-tail net capture (default true)
-	HexSearch      string // hex search bytes (space-separated hex like "4d 5a")
-	HexSearchMode  bool
-	Marked         map[int]bool // marked PIDs (Space key)
-	Separators     map[int]bool // PIDs after which a blank separator row is shown (Tab key)
-	Frozen         bool         // f=freeze: lock sort order, values still update
-	PrevSelPID     int          // PID cursor just left (ghost-leaving effect)
-	SelFade        int          // countdown: departure glow (ghost leaving body)
-	SelArrive      int          // countdown: arrival flash  (ghost entering body)
+	Recording    bool
+	NetScroll    int
+	DevScroll    int
+	SecScroll    int
+	Search       string
+	SearchMode   bool
+	HexSel       int
+	HexRegion    int
+	HexRegScroll int
+	NetLock      bool
+	HexSearch    string
+	HexSearchMode bool
+	Marked         map[int]bool
+	Separators     map[int]bool
+	Frozen         bool
+	Anon           bool
+	PrevSelPID     int
+	SelFade        int
+	SelArrive      int
 }
