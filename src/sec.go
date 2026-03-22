@@ -6,7 +6,28 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
+
+var secCache struct {
+	suid, sgid, wwEtc int
+	t                 time.Time
+}
+
+const secFindTTL = 60 * time.Second
+
+func cachedCountSUID() int {
+	if time.Since(secCache.t) > secFindTTL {
+		secCache.suid = countSUIDBinaries()
+		secCache.sgid = countSGIDBinaries()
+		secCache.wwEtc = checkWorldWritableEtc()
+		secCache.t = time.Now()
+	}
+	return secCache.suid
+}
+
+func cachedCountSGID() int  { cachedCountSUID(); return secCache.sgid }
+func cachedWWEtc() int      { cachedCountSUID(); return secCache.wwEtc }
 
 func readSysctl(key string) string {
 	path := "/proc/sys/" + strings.ReplaceAll(key, ".", "/")
@@ -783,7 +804,7 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		addL(warnLine(m))
 	}
 
-	suids := countSUIDBinaries()
+	suids := cachedCountSUID()
 	suidSt := ok
 	suidNote := fmt.Sprintf("%d binaries", suids)
 	if suids > 30 {
@@ -792,7 +813,7 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	}
 	addL(row(suidSt, "SUID", suidNote))
 
-	sgids := countSGIDBinaries()
+	sgids := cachedCountSGID()
 	sgidSt := ok
 	sgidNote := fmt.Sprintf("%d binaries", sgids)
 	if sgids > 20 {
@@ -841,7 +862,7 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 
 	addL(ph("filesystem", lw))
 
-	wwCount := checkWorldWritableEtc()
+	wwCount := cachedWWEtc()
 	wwSt := ok
 	wwNote := "none"
 	if wwCount > 0 {

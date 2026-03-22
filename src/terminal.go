@@ -166,6 +166,15 @@ func rawOn() {
 	os.Stdout.WriteString(HIDECUR)
 }
 
+func isForeground() bool {
+	var pgrp int32
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, 0, syscall.TIOCGPGRP, uintptr(unsafe.Pointer(&pgrp)))
+	if errno != 0 {
+		return true
+	}
+	return int(pgrp) == syscall.Getpgrp()
+}
+
 func rawOff() {
 	syscall.Syscall(syscall.SYS_IOCTL, 0, syscall.TCSETS, uintptr(unsafe.Pointer(&origT)))
 	os.Stdout.WriteString(CLRSCR + HOME + SHOWCUR + "\033[0m")

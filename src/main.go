@@ -743,7 +743,11 @@ func main() {
 	go func() {
 		collectAll(ss)
 		for {
-			time.Sleep(time.Duration(collectIntervalNs.Load()))
+			interval := time.Duration(collectIntervalNs.Load())
+			if !isForeground() {
+				interval = 5 * time.Second
+			}
+			time.Sleep(interval)
 			collectAll(ss)
 		}
 	}()
@@ -762,18 +766,34 @@ func main() {
 	time.Sleep(50 * time.Millisecond)
 	render(ss, ui, &theme)
 
+	sigStop := make(chan os.Signal, 1)
+	sigCont := make(chan os.Signal, 1)
+	signal.Notify(sigStop, syscall.SIGTSTP)
+	signal.Notify(sigCont, syscall.SIGCONT)
+
 	for {
 		select {
+		case <-sigStop:
+			rawOff()
+			signal.Reset(syscall.SIGTSTP)
+			syscall.Kill(os.Getpid(), syscall.SIGSTOP)
+		case <-sigCont:
+			rawOn()
+			render(ss, ui, &theme)
 		case b := <-inputCh:
 			if handleKey(b, inputCh, ui, ss) {
 				return
 			}
-			render(ss, ui, &theme)
+			if isForeground() {
+				render(ss, ui, &theme)
+			}
 		case <-time.After(time.Duration(collectIntervalNs.Load())):
 			if ui.Recording {
 				writeRecord(ss, ui.Interval)
 			}
-			render(ss, ui, &theme)
+			if isForeground() {
+				render(ss, ui, &theme)
+			}
 		}
 	}
 }
