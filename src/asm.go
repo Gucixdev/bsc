@@ -45,14 +45,31 @@ func loadASM(pid int) {
 		exe := fmt.Sprintf("/proc/%d/exe", pid)
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		out, err := exec.CommandContext(ctx, "objdump", "-d", "--no-show-raw-insn", "-M", "intel", exe).Output()
+
+		objdump, err := exec.LookPath("objdump")
+		if err != nil {
+			for _, p := range []string{"/usr/bin/objdump", "/usr/local/bin/objdump", "/bin/objdump"} {
+				if _, e := os.Stat(p); e == nil {
+					objdump = p
+					err = nil
+					break
+				}
+			}
+		}
+
 		var lines []asmLine
 		var errStr string
 		if err != nil {
-			// try without -M intel (some old objdump versions)
-			out, err = exec.CommandContext(ctx, "objdump", "-d", "--no-show-raw-insn", exe).Output()
+			errStr = "objdump not found in PATH"
 		}
-		if err != nil {
+		var out []byte
+		if errStr == "" {
+			out, err = exec.CommandContext(ctx, objdump, "-d", "--no-show-raw-insn", "-M", "intel", exe).Output()
+			if err != nil {
+				out, err = exec.CommandContext(ctx, objdump, "-d", "--no-show-raw-insn", exe).Output()
+			}
+		}
+		if errStr == "" && err != nil {
 			errStr = err.Error()
 		} else {
 			lines = parseObjdump(string(out))

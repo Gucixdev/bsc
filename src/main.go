@@ -803,12 +803,25 @@ func clipCopy(s string) {
 
 func main() {
 	if os.Getuid() != 0 {
-		cmd := exec.Command("sudo", os.Args...)
+		self, err := os.Executable()
+		if err != nil {
+			self = os.Args[0]
+		}
+		args := append([]string{self}, os.Args[1:]...)
+		var cmd *exec.Cmd
+		if sudo, e := exec.LookPath("sudo"); e == nil {
+			cmd = exec.Command(sudo, args...)
+		} else if doas, e := exec.LookPath("doas"); e == nil {
+			cmd = exec.Command(doas, args...)
+		} else {
+			fmt.Fprintln(os.Stderr, "bsc: needs root; no sudo/doas found")
+			os.Exit(1)
+		}
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			fmt.Fprintln(os.Stderr, "bsc: needs root; sudo failed:", err)
+			fmt.Fprintln(os.Stderr, "bsc: needs root; privilege escalation failed:", err)
 			os.Exit(1)
 		}
 		os.Exit(0)
