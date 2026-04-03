@@ -95,7 +95,7 @@ func readDevG() devGlobal {
 
 func drawDEV(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Theme) {
 	buf.WriteString(pos(0, 0))
-	buf.WriteString(ansiCol(t.HDR) + BOLD + clampStr(" DEV "+strings.Repeat("─", max(0, cols-5)), cols) + RESET + CLEOL)
+	buf.WriteString(ansiCol(t.HDR) + BOLD + clampStr(" DEV · MAIN "+strings.Repeat("─", max(0, cols-12)), cols) + RESET + CLEOL)
 	row := 1
 
 	d := readDevG()
