@@ -106,19 +106,23 @@ do_deps() {
     fi
 
     # detect package manager
-    if command -v apt-get &>/dev/null; then PM=apt
-    elif command -v dnf   &>/dev/null; then PM=dnf
-    elif command -v pacman &>/dev/null; then PM=pacman
-    else echo "error: no supported package manager (apt/dnf/pacman)" >&2; exit 1; fi
+    if   command -v apt-get &>/dev/null; then PM=apt
+    elif command -v dnf     &>/dev/null; then PM=dnf
+    elif command -v zypper  &>/dev/null; then PM=zypper
+    elif command -v pacman  &>/dev/null; then PM=pacman
+    elif command -v yum     &>/dev/null; then PM=yum
+    else echo "error: no supported package manager (apt/dnf/zypper/pacman/yum)" >&2; exit 1; fi
 
     echo "package manager: $PM  mode: $mode"
     echo ""
 
     # ── minimal ──────────────────────────────────────────────────────────────
     case "$PM" in
-    apt)    min=(binutils lm-sensors smartmontools xclip xsel iproute2 pciutils usbutils) ;;
-    dnf)    min=(binutils lm_sensors smartmontools xclip iproute pciutils usbutils) ;;
-    pacman) min=(binutils lm_sensors smartmontools xclip xsel iproute2 pciutils usbutils) ;;
+    apt)    min=(binutils lm-sensors smartmontools xclip xsel iproute2 pciutils usbutils util-linux) ;;
+    dnf)    min=(binutils lm_sensors smartmontools xclip xsel iproute pciutils usbutils util-linux) ;;
+    zypper) min=(binutils sensors smartmontools xclip xsel iproute2 pciutils usbutils util-linux) ;;
+    pacman) min=(binutils lm_sensors smartmontools xclip xsel iproute2 pciutils usbutils util-linux) ;;
+    yum)    min=(binutils lm_sensors smartmontools xclip iproute pciutils usbutils util-linux) ;;
     esac
 
     # ── full security + system tools ─────────────────────────────────────────
@@ -130,26 +134,51 @@ do_deps() {
             fail2ban ufw lynis
             sysstat numactl irqbalance
             linux-cpupower
+            net-tools dnsutils tcpdump
             jq curl wget
         )
         ;;
     dnf)
         sec=(
-            nftables iptables apparmor-utils
+            nftables iptables apparmor
             chkrootkit rkhunter aide audit
             fail2ban firewalld lynis
             sysstat numactl irqbalance
             kernel-tools
+            net-tools bind-utils tcpdump
+            jq curl wget
+        )
+        ;;
+    zypper)
+        sec=(
+            nftables iptables apparmor-utils
+            rkhunter aide audit
+            fail2ban firewalld lynis
+            sysstat numactl irqbalance
+            cpupower
+            net-tools bind-utils tcpdump
             jq curl wget
         )
         ;;
     pacman)
         sec=(
             nftables iptables apparmor
-            chkrootkit rkhunter aide audit
+            rkhunter aide audit
             fail2ban ufw lynis
             sysstat numactl irqbalance
             cpupower
+            net-tools bind-tools tcpdump
+            jq curl wget
+        )
+        ;;
+    yum)
+        sec=(
+            nftables iptables
+            rkhunter aide audit
+            fail2ban firewalld
+            sysstat numactl irqbalance
+            kernel-tools
+            net-tools bind-utils tcpdump
             jq curl wget
         )
         ;;
@@ -161,12 +190,12 @@ do_deps() {
     # NVIDIA
     if lspci 2>/dev/null | grep -qi nvidia; then
         echo "  hw: NVIDIA GPU detected"
-        # nvidia-smi comes with the driver; no extra apt package needed
-        # but nvtop is nice
         case "$PM" in
         apt)    hw+=(nvtop) ;;
         dnf)    hw+=(nvtop) ;;
+        zypper) hw+=(nvtop) ;;
         pacman) hw+=(nvtop) ;;
+        yum)    hw+=(nvtop) ;;
         esac
     fi
 
@@ -176,7 +205,9 @@ do_deps() {
         case "$PM" in
         apt)    hw+=(radeontop) ;;
         dnf)    hw+=(radeontop) ;;
+        zypper) hw+=(radeontop) ;;
         pacman) hw+=(radeontop) ;;
+        yum)    hw+=(radeontop) ;;
         esac
     fi
 
@@ -186,7 +217,9 @@ do_deps() {
         case "$PM" in
         apt)    hw+=(intel-gpu-tools) ;;
         dnf)    hw+=(intel-gpu-tools) ;;
+        zypper) hw+=(intel-gpu-tools) ;;
         pacman) hw+=(intel-gpu-tools) ;;
+        yum)    hw+=(intel-gpu-tools) ;;
         esac
     fi
 
@@ -196,7 +229,9 @@ do_deps() {
         case "$PM" in
         apt)    hw+=(intel-microcode) ;;
         dnf)    hw+=(microcode_ctl) ;;
+        zypper) hw+=(ucode-intel) ;;
         pacman) hw+=(intel-ucode) ;;
+        yum)    hw+=(microcode_ctl) ;;
         esac
     fi
 
@@ -206,7 +241,9 @@ do_deps() {
         case "$PM" in
         apt)    hw+=(amd64-microcode) ;;
         dnf)    hw+=(microcode_ctl) ;;
+        zypper) hw+=(ucode-amd) ;;
         pacman) hw+=(amd-ucode) ;;
+        yum)    hw+=(microcode_ctl) ;;
         esac
     fi
 
@@ -214,9 +251,11 @@ do_deps() {
     if [ -d /sys/class/ieee80211 ] && ls /sys/class/ieee80211/ 2>/dev/null | grep -q .; then
         echo "  hw: WiFi detected"
         case "$PM" in
-        apt)    hw+=(iw wireless-tools) ;;
-        dnf)    hw+=(iw wireless-tools) ;;
-        pacman) hw+=(iw wireless_tools) ;;
+        apt)    hw+=(iw wireless-tools wpasupplicant) ;;
+        dnf)    hw+=(iw wireless-tools wpa_supplicant) ;;
+        zypper) hw+=(iw wireless-tools wpa_supplicant) ;;
+        pacman) hw+=(iw wireless_tools wpa_supplicant) ;;
+        yum)    hw+=(iw wireless-tools wpa_supplicant) ;;
         esac
     fi
 
@@ -226,17 +265,27 @@ do_deps() {
         case "$PM" in
         apt)    hw+=(bluez bluez-tools) ;;
         dnf)    hw+=(bluez bluez-tools) ;;
+        zypper) hw+=(bluez) ;;
         pacman) hw+=(bluez bluez-utils) ;;
+        yum)    hw+=(bluez) ;;
         esac
     fi
 
     # NVMe
     if ls /dev/nvme* 2>/dev/null | grep -q .; then
         echo "  hw: NVMe detected"
+        hw+=(nvme-cli)
+    fi
+
+    # TPM
+    if ls /dev/tpm* 2>/dev/null | grep -q . || [ -d /sys/class/tpm ]; then
+        echo "  hw: TPM detected"
         case "$PM" in
-        apt)    hw+=(nvme-cli) ;;
-        dnf)    hw+=(nvme-cli) ;;
-        pacman) hw+=(nvme-cli) ;;
+        apt)    hw+=(tpm2-tools) ;;
+        dnf)    hw+=(tpm2-tools) ;;
+        zypper) hw+=(tpm2.0-tools) ;;
+        pacman) hw+=(tpm2-tools) ;;
+        yum)    hw+=(tpm2-tools) ;;
         esac
     fi
 
@@ -262,11 +311,24 @@ do_deps() {
         [[ "$ans" =~ ^[yY]$ ]] || { echo "aborted."; return; }
     fi
 
-    case "$PM" in
-    apt)    sudo apt-get install -y "${final[@]}" ;;
-    dnf)    sudo dnf install -y "${final[@]}" ;;
-    pacman) sudo pacman -S --noconfirm "${final[@]}" ;;
-    esac
+    # install one by one so a missing package doesn't abort the whole run
+    ok=0; skip=0
+    for pkg in "${final[@]}"; do
+        case "$PM" in
+        apt)    sudo apt-get install -y "$pkg" &>/dev/null && r=0 || r=1 ;;
+        dnf)    sudo dnf install -y "$pkg"     &>/dev/null && r=0 || r=1 ;;
+        zypper) sudo zypper install -y "$pkg"  &>/dev/null && r=0 || r=1 ;;
+        pacman) sudo pacman -S --noconfirm "$pkg" &>/dev/null && r=0 || r=1 ;;
+        yum)    sudo yum install -y "$pkg"     &>/dev/null && r=0 || r=1 ;;
+        esac
+        if [ $r -eq 0 ]; then
+            echo "  ✓ $pkg"; (( ok++ )) || true
+        else
+            echo "  ✗ $pkg (not found, skipped)"; (( skip++ )) || true
+        fi
+    done
+    echo ""
+    echo "done: $ok installed, $skip skipped"
 }
 
 do_uninstall() {
