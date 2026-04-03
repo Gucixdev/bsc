@@ -192,7 +192,8 @@ func drawOPT(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	rmem := readSysctlOpt("net.core.rmem_max")
 	wmem := readSysctlOpt("net.core.wmem_max")
 	rmemN, _ := strconv.Atoi(rmem)
-	add("socket buffers", fmt.Sprintf("rx:%s tx:%s", fmtBufSize(rmemN), fmtBufSize(len(wmem))), rmemN >= 4*1024*1024, "≥4MB recommended for high throughput")
+	wmemN, _ := strconv.Atoi(wmem)
+	add("socket buffers", fmt.Sprintf("rx:%s tx:%s", fmtBufSize(rmemN), fmtBufSize(wmemN)), rmemN >= 4*1024*1024, "≥4MB recommended for high throughput")
 
 	tfo := readSysctlOpt("net.ipv4.tcp_fastopen")
 	add("tcp_fastopen", map[string]string{"0": "off", "1": "client", "2": "server", "3": "both"}[tfo]+" ("+tfo+")", tfo == "3", "3=client+server")
