@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -302,32 +301,6 @@ func sendSignal(ss *SysState, ui *UI, sig syscall.Signal) {
 }
 
 func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
-	if ui.Tab == TAB_HEX && ui.HexGotoMode {
-		switch b {
-		case '\033':
-			ui.HexGotoMode = false
-			ui.HexGotoStr = ""
-		case '\r', '\n':
-			ui.HexGotoMode = false
-			if ui.HexGotoStr != "" {
-				off, err := strconv.ParseInt(ui.HexGotoStr, 16, 64)
-				if err == nil && off >= 0 {
-					bpr := 16 // approximate; exact computed in render
-					ui.HexScroll = int(off) / bpr
-				}
-			}
-			ui.HexGotoStr = ""
-		case '\x08', 127:
-			if len(ui.HexGotoStr) > 0 {
-				ui.HexGotoStr = ui.HexGotoStr[:len(ui.HexGotoStr)-1]
-			}
-		default:
-			if (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F') {
-				ui.HexGotoStr += string(b)
-			}
-		}
-		return false
-	}
 	if ui.Tab == TAB_HEX && ui.HexSearchMode {
 		switch b {
 		case '\033':
@@ -470,11 +443,7 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 			}
 		}
 	case 'g':
-		if ui.Tab == TAB_HEX {
-			ui.HexGotoMode = true
-			ui.HexGotoStr = ""
-		} else if ui.Tab == TAB_ASM {
-			// go to top
+		if ui.Tab == TAB_ASM {
 			ui.AsmScroll = 0
 		}
 	case 'G':
@@ -485,10 +454,6 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 			if n > 0 {
 				ui.AsmScroll = n - 1
 			}
-		}
-	case 'S':
-		if ui.Tab == TAB_HEX {
-			go hexSaveDump(ss, ui)
 		}
 	case 'p':
 		if ui.Tab == TAB_HEX {
@@ -592,16 +557,23 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 		}
 	case 'k':
 		if ui.Tab == TAB_OVW {
-			sendSignal(ss, ui, syscall.SIGKILL)
-		}
-	case 'K':
-		if ui.Tab == TAB_OVW && len(ui.Marked) > 0 {
-			for pid, marked := range ui.Marked {
-				if marked {
-					syscall.Kill(pid, syscall.SIGKILL)
+			marked := false
+			for _, v := range ui.Marked {
+				if v {
+					marked = true
+					break
 				}
 			}
-			ui.Marked = nil
+			if marked {
+				for pid, v := range ui.Marked {
+					if v {
+						syscall.Kill(pid, syscall.SIGKILL)
+					}
+				}
+				ui.Marked = nil
+			} else {
+				sendSignal(ss, ui, syscall.SIGKILL)
+			}
 		}
 	case '9':
 		sendSignal(ss, ui, syscall.SIGKILL)

@@ -40,10 +40,8 @@ func drawStatusBar(buf *strings.Builder, rows, cols int, ui *UI, interval time.D
 		local = " | ↑↓=scroll"
 	case TAB_HEX:
 		srcName := [4]string{"MEM", "DISK", "NET", "VRAM"}[ui.HexSource]
-		local = fmt.Sprintf(" | ↑↓=scroll ←→=sel w=src g=goto S=save /=search  src:%s", srcName)
-		if ui.HexGotoMode {
-			local = fmt.Sprintf(" | goto:0x%s_", ui.HexGotoStr)
-		} else if ui.HexSource == HEX_NET && ui.NetLock {
+		local = fmt.Sprintf(" | ↑↓=scroll ←→=sel w=src l=lock /=search  src:%s", srcName)
+		if ui.HexSource == HEX_NET && ui.NetLock {
 			local += " [LOCK]"
 		}
 	case TAB_ASM:
