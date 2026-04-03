@@ -1,5 +1,38 @@
-PIZZAWARE LICENSE
+PIZZAWARE LICENSE v1.0
 
-Do whatever you want with this.
-If you find it useful, buy me a pizza.
-No warranty. No support. No bullshit.
+Copyright (c) 2025 Gucix
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software, to deal in the Software without restriction — including the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+sell copies — subject to the following conditions:
+
+1. PIZZA CLAUSE
+   If this software saved you time, fixed your server at 3am, helped you find
+   a runaway process, or otherwise made your life better in any measurable way,
+   you are morally obligated to buy the author a pizza. Any topping. No pineapple.
+
+2. ATTRIBUTION
+   You don't have to credit anyone. But it would be cool if you did.
+
+3. NO WARRANTY
+   This software is provided "as is", with no warranty of any kind. If it
+   deletes your files, fries your GPU, kills your processes, or reveals things
+   about your system you didn't want to know — that's on you. You ran it as root.
+
+4. NO SUPPORT
+   The author is not your sysadmin. Open an issue if you want. No promises.
+
+5. REDISTRIBUTION
+   Do whatever you want with this. Fork it, sell it, tattoo it on your arm.
+   Just don't claim you wrote it from scratch if you didn't.
+
+6. SUBLICENSING
+   Any derivative work may use this license or any other license, including
+   but not limited to MIT, GPL, BSD, WTFPL, or another PIZZAWARE license with
+   stricter topping requirements.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS "AS IS" AND ANY EXPRESS OR
+IMPLIED WARRANTIES ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, OR PIZZA-RELATED DAMAGES ARISING FROM USE
+OF THIS SOFTWARE.
