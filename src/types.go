@@ -230,6 +230,4 @@ type UI struct {
 	SelArrive      int
 	AsmPID         int
 	AsmScroll      int
-	HexGotoMode    bool
-	HexGotoStr     string
 }
