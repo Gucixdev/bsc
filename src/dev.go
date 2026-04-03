@@ -211,6 +211,11 @@ func drawDEV(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	}
 
 	// ── THREAD SYSCALL TRACE ──────────────────────────────────────────────────
+	// always reserve at least 12 rows for trace
+	const traceReserve = 12
+	if row > rows-traceReserve {
+		row = rows - traceReserve
+	}
 	if row < rows-3 {
 		tHdr := "─── THREAD TRACE "
 		tHdr = clampStr(tHdr+strings.Repeat("─", max(0, cols-len(tHdr))), cols)
@@ -247,9 +252,9 @@ func drawDEV(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		}
 		ss.traceMu.Unlock()
 
-		ncols := max(1, min(len(entries), cols/18))
-		if ncols == 0 {
-			ncols = 1
+		ncols := max(1, min(len(entries), cols/24))
+		if ncols > 6 {
+			ncols = 6
 		}
 		ui.TraceNCols = ncols
 		tidStart := min(ui.CoreOffset, max(0, len(entries)-ncols))

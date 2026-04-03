@@ -43,15 +43,20 @@ func loadASM(pid int) {
 
 	go func() {
 		exe := fmt.Sprintf("/proc/%d/exe", pid)
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
 
-		objdump, err := exec.LookPath("objdump")
-		if err != nil {
+		// check exe is accessible
+		if _, statErr := os.Lstat(exe); statErr != nil {
+			asmMu.Lock()
+			asmCache = asmEntry{pid: pid, err: "no exe: " + statErr.Error(), loaded: time.Now()}
+			asmMu.Unlock()
+			return
+		}
+
+		objdump, _ := exec.LookPath("objdump")
+		if objdump == "" {
 			for _, p := range []string{"/usr/bin/objdump", "/usr/local/bin/objdump", "/bin/objdump"} {
 				if _, e := os.Stat(p); e == nil {
 					objdump = p
-					err = nil
 					break
 				}
 			}
@@ -59,20 +64,26 @@ func loadASM(pid int) {
 
 		var lines []asmLine
 		var errStr string
-		if err != nil {
-			errStr = "objdump not found in PATH"
+		if objdump == "" {
+			errStr = "objdump not found — install binutils"
 		}
-		var out []byte
 		if errStr == "" {
-			out, err = exec.CommandContext(ctx, objdump, "-d", "--no-show-raw-insn", "-M", "intel", exe).Output()
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			out, err := exec.CommandContext(ctx, objdump, "-d", "--no-show-raw-insn", "-M", "intel", exe).CombinedOutput()
 			if err != nil {
-				out, err = exec.CommandContext(ctx, objdump, "-d", "--no-show-raw-insn", exe).Output()
+				out, err = exec.CommandContext(ctx, objdump, "-d", "--no-show-raw-insn", exe).CombinedOutput()
 			}
-		}
-		if errStr == "" && err != nil {
-			errStr = err.Error()
-		} else {
-			lines = parseObjdump(string(out))
+			if err != nil {
+				// show first line of combined output for context
+				msg := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
+				if msg == "" {
+					msg = err.Error()
+				}
+				errStr = msg
+			} else {
+				lines = parseObjdump(string(out))
+			}
 		}
 		asmMu.Lock()
 		asmCache = asmEntry{pid: pid, lines: lines, loading: false, err: errStr, loaded: time.Now()}
@@ -214,8 +225,6 @@ func drawASM(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	if cache.err != "" {
 		buf.WriteString(pos(2, 0))
 		buf.WriteString(ansiCol(t.WARN) + "  " + cache.err + RESET + CLEOL)
-		buf.WriteString(pos(3, 0))
-		buf.WriteString(dim + "  install binutils (objdump) for disassembly" + RESET + CLEOL)
 		for r := 4; r < rows-2; r++ {
 			buf.WriteString(pos(r, 0) + CLEOL)
 		}
@@ -245,12 +254,12 @@ func drawASM(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		l := lines[idx]
 		var s string
 		if l.fn != "" {
-			s = ansiCol(t.HDR) + BOLD + fmt.Sprintf(" %016x  <%s>", l.addr, l.fn) + RESET
+			s = ansiCol(t.DISK) + BOLD + fmt.Sprintf(" %016x  <%s>", l.addr, l.fn) + RESET
 		} else {
 			opCol := asmOpColor(l.op, t)
-			s = dim + fmt.Sprintf(" %016x  ", l.addr) + RESET +
+			s = DIM + ansiCol(t.DISK) + fmt.Sprintf(" %016x  ", l.addr) + RESET +
 				opCol + fmt.Sprintf("%-10s", l.op) + RESET +
-				ansiCol(t.USB) + l.args + RESET
+				ansiCol(t.DISK) + l.args + RESET
 		}
 		buf.WriteString(clampVisual(s, cols) + CLEOL)
 	}
