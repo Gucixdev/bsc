@@ -7,6 +7,19 @@ BIN="${HOME}/.local/bin"
 CFG="${XDG_CONFIG_HOME:-$HOME/.config}/bsc"
 NAME="bsc"
 
+# sudo wrapper — use sudo if available, su -c if not, plain if already root
+_sudo() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    elif command -v sudo &>/dev/null; then
+        sudo "$@"
+    elif command -v doas &>/dev/null; then
+        doas "$@"
+    else
+        su -c "$(printf '%q ' "$@")"
+    fi
+}
+
 ACTION="$1"; shift || true
 VARIANT=""
 YES=0
@@ -315,11 +328,11 @@ do_deps() {
     ok=0; skip=0
     for pkg in "${final[@]}"; do
         case "$PM" in
-        apt)    sudo apt-get install -y "$pkg" &>/dev/null && r=0 || r=1 ;;
-        dnf)    sudo dnf install -y "$pkg"     &>/dev/null && r=0 || r=1 ;;
-        zypper) sudo zypper install -y "$pkg"  &>/dev/null && r=0 || r=1 ;;
-        pacman) sudo pacman -S --noconfirm "$pkg" &>/dev/null && r=0 || r=1 ;;
-        yum)    sudo yum install -y "$pkg"     &>/dev/null && r=0 || r=1 ;;
+        apt)    _sudo apt-get install -y "$pkg" &>/dev/null && r=0 || r=1 ;;
+        dnf)    _sudo dnf install -y "$pkg"     &>/dev/null && r=0 || r=1 ;;
+        zypper) _sudo zypper install -y "$pkg"  &>/dev/null && r=0 || r=1 ;;
+        pacman) _sudo pacman -S --noconfirm "$pkg" &>/dev/null && r=0 || r=1 ;;
+        yum)    _sudo yum install -y "$pkg"     &>/dev/null && r=0 || r=1 ;;
         esac
         if [ $r -eq 0 ]; then
             echo "  ✓ $pkg"; (( ok++ )) || true
@@ -362,7 +375,7 @@ do_uninstall() {
         if [ -w "$bin" ]; then
             rm -f "$bin" && echo "removed $bin"
         else
-            sudo rm -f "$bin" && echo "removed $bin (sudo)"
+            _sudo rm -f "$bin" && echo "removed $bin (elevated)"
         fi
     done <<< "$selected"
     hash -r
