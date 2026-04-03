@@ -1435,8 +1435,10 @@ func checkLastLogin() string {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) > 0 && lines[0] != "" {
 		f := strings.Fields(lines[0])
-		if len(f) >= 5 {
+		if len(f) >= 7 {
 			return strings.Join(f[:7], " ")
+		} else if len(f) >= 1 {
+			return strings.Join(f, " ")
 		}
 	}
 	return "n/a"
