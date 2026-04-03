@@ -343,7 +343,7 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 	}
 
 	switch b {
-	case 17: // ^Q
+	case 'q', 17: // q or ^Q
 		return true
 	case '1':
 		ui.Tab = TAB_OVW
