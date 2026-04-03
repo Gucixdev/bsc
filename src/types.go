@@ -211,8 +211,10 @@ type UI struct {
 	DetailScroll int
 	Recording    bool
 	NetScroll    int
+	DevPage      int
 	DevScroll    int
 	SecScroll    int
+	OptScroll    int
 	Search       string
 	SearchMode   bool
 	HexSel       int

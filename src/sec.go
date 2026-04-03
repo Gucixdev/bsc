@@ -1002,6 +1002,126 @@ func checkHostsDenyExists() bool {
 	return false
 }
 
+func checkLUKS() []string {
+	entries, err := os.ReadDir("/sys/block")
+	if err != nil {
+		return nil
+	}
+	var devs []string
+	for _, e := range entries {
+		uuid, err := os.ReadFile("/sys/block/" + e.Name() + "/dm/uuid")
+		if err == nil && strings.HasPrefix(string(uuid), "LUKS") {
+			devs = append(devs, e.Name())
+		}
+	}
+	return devs
+}
+
+func scanSUIDBins() int {
+	dirs := []string{"/usr/bin", "/usr/sbin", "/bin", "/sbin", "/usr/local/bin", "/usr/local/sbin"}
+	n := 0
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			info, err := e.Info()
+			if err == nil && info.Mode()&0o4000 != 0 {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func checkDangerousCaps() []string {
+	entries, _ := os.ReadDir("/proc")
+	var flagged []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		pid := e.Name()
+		if len(pid) == 0 || pid[0] < '0' || pid[0] > '9' {
+			continue
+		}
+		raw, err := os.ReadFile("/proc/" + pid + "/status")
+		if err != nil {
+			continue
+		}
+		var capEff uint64
+		var comm string
+		for _, line := range strings.Split(string(raw), "\n") {
+			if strings.HasPrefix(line, "Name:") {
+				comm = strings.TrimSpace(strings.TrimPrefix(line, "Name:"))
+			}
+			if strings.HasPrefix(line, "CapEff:") {
+				hex := strings.TrimSpace(strings.TrimPrefix(line, "CapEff:"))
+				capEff, _ = strconv.ParseUint(hex, 16, 64)
+			}
+		}
+		if capEff == 0 {
+			continue
+		}
+		// CAP_SYS_ADMIN=21, CAP_NET_ADMIN=12, CAP_SYS_PTRACE=19, CAP_SYS_MODULE=16
+		dangerous := uint64(1<<21 | 1<<12 | 1<<19 | 1<<16)
+		if capEff&dangerous != 0 {
+			flagged = append(flagged, fmt.Sprintf("%s(%s)", comm, pid))
+		}
+		if len(flagged) >= 8 {
+			break
+		}
+	}
+	return flagged
+}
+
+func checkPendingSecUpdates() int {
+	// apt
+	out := runCmd(5000000000, "apt-get", "--just-print", "upgrade")
+	if out != "" {
+		n := 0
+		for _, line := range strings.Split(out, "\n") {
+			if strings.HasPrefix(line, "Inst") && strings.Contains(line, "security") {
+				n++
+			}
+		}
+		return n
+	}
+	// dnf/rpm
+	out2 := runCmd(5000000000, "dnf", "updateinfo", "list", "security", "--quiet")
+	if out2 != "" {
+		lines := strings.Split(strings.TrimSpace(out2), "\n")
+		if len(lines) > 0 && lines[0] != "" {
+			return len(lines)
+		}
+	}
+	return -1
+}
+
+func checkWorldWritableDirs() []string {
+	var bad []string
+	for _, dir := range []string{"/tmp", "/var/tmp", "/dev/shm", "/run"} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			info, err := e.Info()
+			if err != nil || !info.IsDir() {
+				continue
+			}
+			if info.Mode().Perm()&0o002 != 0 && info.Mode().Perm()&0o1000 == 0 {
+				bad = append(bad, dir+"/"+e.Name())
+			}
+			if len(bad) >= 5 {
+				return bad
+			}
+		}
+	}
+	return bad
+}
+
 func checkIOMMU() string {
 	entries, err := os.ReadDir("/sys/kernel/iommu_groups")
 	if err != nil || len(entries) == 0 {
@@ -1359,6 +1479,9 @@ func countOpenFiles() int {
 }
 
 func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Theme) {
+	buf.WriteString(pos(0, 0))
+	buf.WriteString(ansiCol(t.HDR) + BOLD + clampStr(" DEV · SEC "+strings.Repeat("─", max(0, cols-11)), cols) + RESET + CLEOL)
+
 	ss.mu.RLock()
 	vms := ss.VMs
 	ss.mu.RUnlock()
@@ -1807,6 +1930,38 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 			addl("logged in", fmt.Sprintf("%d sessions", len(users)), inf)
 			for _, u := range users { add(ColLine{Text: "   " + u, C: inf}) }
 		}
+	}
+
+	// encryption
+	addh("encryption")
+	luks := checkLUKS()
+	addl("LUKS volumes", fmt.Sprintf("%d active", len(luks)), bc(len(luks) > 0))
+	for _, d := range luks { add(ColLine{Text: "   ✓ /dev/" + d, C: ok}) }
+
+	// process capabilities
+	addh("process capabilities")
+	caps := checkDangerousCaps()
+	addl("high-cap procs", fmt.Sprintf("%d", len(caps)), bc(len(caps) == 0))
+	for _, c := range caps { add(ColLine{Text: "   ! " + c, C: warn}) }
+
+	// suid binaries
+	addh("suid binaries")
+	suidN := scanSUIDBins()
+	addl("suid in system dirs", fmt.Sprintf("%d", suidN), bc(suidN < 20))
+
+	// world-writable
+	addh("world-writable dirs")
+	wwDirs := checkWorldWritableDirs()
+	addl("unsafe dirs in /tmp+", fmt.Sprintf("%d", len(wwDirs)), bc(len(wwDirs) == 0))
+	for _, d := range wwDirs { add(ColLine{Text: "   ! " + d, C: warn}) }
+
+	// security updates
+	addh("pending updates")
+	pending := checkPendingSecUpdates()
+	if pending < 0 {
+		add(ColLine{Text: "  n/a (no apt/dnf)", C: inf, Dim: true})
+	} else {
+		addl("security updates", fmt.Sprintf("%d", pending), bc(pending == 0))
 	}
 
 	// bluetooth

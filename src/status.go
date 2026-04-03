@@ -35,9 +35,11 @@ func drawStatusBar(buf *strings.Builder, rows, cols int, ui *UI, interval time.D
 			local += " [FROZEN]"
 		}
 	case TAB_DEV:
-		local = " | ↑↓=scroll ←→=threads"
-	case TAB_SEC:
-		local = " | ↑↓=scroll"
+		pages := [3]string{"DEV", "SEC", "OPT"}
+		local = fmt.Sprintf(" | ↑↓=scroll w=page [%s]", pages[ui.DevPage])
+		if ui.DevPage == DEV_MAIN {
+			local += " ←→=threads"
+		}
 	case TAB_HEX:
 		srcName := [4]string{"MEM", "DISK", "NET", "VRAM"}[ui.HexSource]
 		local = fmt.Sprintf(" | ↑↓=scroll ←→=sel w=src l=lock /=search  src:%s", srcName)

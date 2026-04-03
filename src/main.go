@@ -267,9 +267,14 @@ func render(ss *SysState, ui *UI, t *Theme) {
 	case TAB_OVW:
 		drawOVW(&buf, rows, cols, cores, load, raplW, mem, gpu, disks, nets, gateway, audio, usb, vms, procs, cnts, histCPU, histGPU, histVRAM, histNetRx, histNetTx, histDiskR, histDiskW, histVMsRun, histQEMURun, histVBoxRun, histVMwRun, histDockRun, histPodRun, histCores, ui, t, ss)
 	case TAB_DEV:
-		drawDEV(&buf, rows, cols, ss, ui, t)
-	case TAB_SEC:
-		drawSEC(&buf, rows, cols, ss, ui, t)
+		switch ui.DevPage {
+		case DEV_MAIN:
+			drawDEV(&buf, rows, cols, ss, ui, t)
+		case DEV_SEC:
+			drawSEC(&buf, rows, cols, ss, ui, t)
+		case DEV_OPT:
+			drawOPT(&buf, rows, cols, ss, ui, t)
+		}
 	case TAB_HEX:
 		drawHEX(&buf, rows, cols, ss, ui, t)
 	case TAB_ASM:
@@ -343,23 +348,21 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 	}
 
 	switch b {
-	case 'q', 17: // q or ^Q
+	case 17: // ^Q
 		return true
 	case '1':
 		ui.Tab = TAB_OVW
 	case '2':
 		ui.Tab = TAB_DEV
 	case '3':
-		ui.Tab = TAB_SEC
-	case '4':
 		ui.Tab = TAB_HEX
-	case '5':
+	case '4':
 		ui.Tab = TAB_ASM
 		if ui.AsmPID == 0 {
 			ui.AsmPID = ui.SelPID
 		}
 	case '\t':
-		ui.Tab = (ui.Tab + 1) % 5
+		ui.Tab = (ui.Tab + 1) % 4
 	case '+', '=':
 		ui.Interval += 100 * time.Millisecond
 		if ui.Interval > 10*time.Second {
@@ -385,6 +388,8 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 			ui.HexSource = (ui.HexSource + 1) % 4
 			ui.HexScroll = 0
 			ui.HexRegScroll = 0
+		} else if ui.Tab == TAB_DEV {
+			ui.DevPage = (ui.DevPage + 1) % 3
 		}
 	case 'm':
 		if ui.Tab == TAB_OVW {
@@ -513,16 +518,15 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 	case 'i':
 		switch ui.Tab {
 		case TAB_OVW:
-			if ui.NetScroll > 0 {
-				ui.NetScroll--
-			}
+			if ui.NetScroll > 0 { ui.NetScroll-- }
 		case TAB_DEV:
-			if ui.DevScroll > 0 {
-				ui.DevScroll--
-			}
-		case TAB_SEC:
-			if ui.SecScroll > 0 {
-				ui.SecScroll--
+			switch ui.DevPage {
+			case DEV_MAIN:
+				if ui.DevScroll > 0 { ui.DevScroll-- }
+			case DEV_SEC:
+				if ui.SecScroll > 0 { ui.SecScroll-- }
+			case DEV_OPT:
+				if ui.OptScroll > 0 { ui.OptScroll-- }
 			}
 		}
 	case 'o':
@@ -530,9 +534,14 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 		case TAB_OVW:
 			ui.NetScroll++
 		case TAB_DEV:
-			ui.DevScroll++
-		case TAB_SEC:
-			ui.SecScroll++
+			switch ui.DevPage {
+			case DEV_MAIN:
+				ui.DevScroll++
+			case DEV_SEC:
+				ui.SecScroll++
+			case DEV_OPT:
+				ui.OptScroll++
+			}
 		}
 	case 'y':
 		if ui.Tab == TAB_OVW && ui.SelPID != 0 {
@@ -618,7 +627,7 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 		return
 	}
 	if len(seq) == 2 && seq[0] == '[' && seq[1] == 'Z' {
-		ui.Tab = (ui.Tab + 4) % 5 // prev tab
+		ui.Tab = (ui.Tab + 3) % 4 // prev tab
 		return
 	}
 	if len(seq) < 2 || seq[0] != '[' {
@@ -630,21 +639,18 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 		case TAB_OVW:
 			ui.SelDelta--
 		case TAB_HEX:
-			if ui.HexScroll > 0 {
-				ui.HexScroll--
-			}
+			if ui.HexScroll > 0 { ui.HexScroll-- }
 		case TAB_DEV:
-			if ui.DevScroll > 0 {
-				ui.DevScroll--
-			}
-		case TAB_SEC:
-			if ui.SecScroll > 0 {
-				ui.SecScroll--
+			switch ui.DevPage {
+			case DEV_MAIN:
+				if ui.DevScroll > 0 { ui.DevScroll-- }
+			case DEV_SEC:
+				if ui.SecScroll > 0 { ui.SecScroll-- }
+			case DEV_OPT:
+				if ui.OptScroll > 0 { ui.OptScroll-- }
 			}
 		case TAB_ASM:
-			if ui.AsmScroll > 0 {
-				ui.AsmScroll--
-			}
+			if ui.AsmScroll > 0 { ui.AsmScroll-- }
 		}
 	case seq[1] == 'B':
 		switch ui.Tab {
@@ -653,9 +659,14 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 		case TAB_HEX:
 			ui.HexScroll++
 		case TAB_DEV:
-			ui.DevScroll++
-		case TAB_SEC:
-			ui.SecScroll++
+			switch ui.DevPage {
+			case DEV_MAIN:
+				ui.DevScroll++
+			case DEV_SEC:
+				ui.SecScroll++
+			case DEV_OPT:
+				ui.OptScroll++
+			}
 		case TAB_ASM:
 			ui.AsmScroll++
 		}
@@ -666,7 +677,14 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 		case TAB_HEX:
 			if ui.HexScroll > 5 { ui.HexScroll -= 5 } else { ui.HexScroll = 0 }
 		case TAB_DEV:
-			if ui.DevScroll > 5 { ui.DevScroll -= 5 } else { ui.DevScroll = 0 }
+			switch ui.DevPage {
+			case DEV_MAIN:
+				if ui.DevScroll > 5 { ui.DevScroll -= 5 } else { ui.DevScroll = 0 }
+			case DEV_SEC:
+				if ui.SecScroll > 5 { ui.SecScroll -= 5 } else { ui.SecScroll = 0 }
+			case DEV_OPT:
+				if ui.OptScroll > 5 { ui.OptScroll -= 5 } else { ui.OptScroll = 0 }
+			}
 		case TAB_ASM:
 			if ui.AsmScroll > 5 { ui.AsmScroll -= 5 } else { ui.AsmScroll = 0 }
 		}
@@ -677,7 +695,11 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 		case TAB_HEX:
 			ui.HexScroll += 5
 		case TAB_DEV:
-			ui.DevScroll += 5
+			switch ui.DevPage {
+			case DEV_MAIN: ui.DevScroll += 5
+			case DEV_SEC: ui.SecScroll += 5
+			case DEV_OPT: ui.OptScroll += 5
+			}
 		case TAB_ASM:
 			ui.AsmScroll += 5
 		}
@@ -731,7 +753,14 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 		case TAB_HEX:
 			if ui.HexScroll > 10 { ui.HexScroll -= 10 } else { ui.HexScroll = 0 }
 		case TAB_DEV:
-			if ui.DevScroll > 10 { ui.DevScroll -= 10 } else { ui.DevScroll = 0 }
+			switch ui.DevPage {
+			case DEV_MAIN:
+				if ui.DevScroll > 10 { ui.DevScroll -= 10 } else { ui.DevScroll = 0 }
+			case DEV_SEC:
+				if ui.SecScroll > 10 { ui.SecScroll -= 10 } else { ui.SecScroll = 0 }
+			case DEV_OPT:
+				if ui.OptScroll > 10 { ui.OptScroll -= 10 } else { ui.OptScroll = 0 }
+			}
 		case TAB_ASM:
 			if ui.AsmScroll > 10 { ui.AsmScroll -= 10 } else { ui.AsmScroll = 0 }
 		}
@@ -742,7 +771,11 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 		case TAB_HEX:
 			ui.HexScroll += 10
 		case TAB_DEV:
-			ui.DevScroll += 10
+			switch ui.DevPage {
+			case DEV_MAIN: ui.DevScroll += 10
+			case DEV_SEC: ui.SecScroll += 10
+			case DEV_OPT: ui.OptScroll += 10
+			}
 		case TAB_ASM:
 			ui.AsmScroll += 10
 		}
