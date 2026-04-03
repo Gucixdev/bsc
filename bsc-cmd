@@ -129,7 +129,7 @@ do_deps() {
             chkrootkit rkhunter aide auditd
             fail2ban ufw lynis
             sysstat numactl irqbalance
-            linux-cpupower cpufrequtils
+            linux-cpupower
             jq curl wget
         )
         ;;
@@ -139,7 +139,7 @@ do_deps() {
             chkrootkit rkhunter aide audit
             fail2ban firewalld lynis
             sysstat numactl irqbalance
-            kernel-tools cpufrequtils
+            kernel-tools
             jq curl wget
         )
         ;;
@@ -149,7 +149,7 @@ do_deps() {
             chkrootkit rkhunter aide audit
             fail2ban ufw lynis
             sysstat numactl irqbalance
-            cpupower cpufrequtils
+            cpupower
             jq curl wget
         )
         ;;
