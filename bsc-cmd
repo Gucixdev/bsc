@@ -87,6 +87,188 @@ do_install() {
     hash -r
 }
 
+do_deps() {
+    local mode="" dry=0
+    for arg in "$@"; do
+        case "$arg" in
+        -m|minimal|min) mode=minimal ;;
+        -f|full)        mode=full ;;
+        --dry-run|-n)   dry=1 ;;
+        -y|--yes)       YES=1 ;;
+        esac
+    done
+
+    if [ -z "$mode" ]; then
+        echo "usage: bsc-cmd deps [-m|minimal] [-f|full] [--dry-run] [-y]"
+        echo "  -m  minimal  basic tools only (binutils, sensors, smart, clipboard)"
+        echo "  -f  full     + all security tools, hardware-specific packages"
+        exit 1
+    fi
+
+    # detect package manager
+    if command -v apt-get &>/dev/null; then PM=apt
+    elif command -v dnf   &>/dev/null; then PM=dnf
+    elif command -v pacman &>/dev/null; then PM=pacman
+    else echo "error: no supported package manager (apt/dnf/pacman)" >&2; exit 1; fi
+
+    echo "package manager: $PM  mode: $mode"
+    echo ""
+
+    # ── minimal ──────────────────────────────────────────────────────────────
+    case "$PM" in
+    apt)    min=(binutils lm-sensors smartmontools xclip xsel iproute2 pciutils usbutils) ;;
+    dnf)    min=(binutils lm_sensors smartmontools xclip iproute pciutils usbutils) ;;
+    pacman) min=(binutils lm_sensors smartmontools xclip xsel iproute2 pciutils usbutils) ;;
+    esac
+
+    # ── full security + system tools ─────────────────────────────────────────
+    case "$PM" in
+    apt)
+        sec=(
+            nftables iptables apparmor-utils
+            chkrootkit rkhunter aide auditd
+            fail2ban ufw lynis
+            sysstat numactl irqbalance
+            linux-cpupower cpufrequtils
+            jq curl wget
+        )
+        ;;
+    dnf)
+        sec=(
+            nftables iptables apparmor-utils
+            chkrootkit rkhunter aide audit
+            fail2ban firewalld lynis
+            sysstat numactl irqbalance
+            kernel-tools cpufrequtils
+            jq curl wget
+        )
+        ;;
+    pacman)
+        sec=(
+            nftables iptables apparmor
+            chkrootkit rkhunter aide audit
+            fail2ban ufw lynis
+            sysstat numactl irqbalance
+            cpupower cpufrequtils
+            jq curl wget
+        )
+        ;;
+    esac
+
+    # ── hardware detection ───────────────────────────────────────────────────
+    hw=()
+
+    # NVIDIA
+    if lspci 2>/dev/null | grep -qi nvidia; then
+        echo "  hw: NVIDIA GPU detected"
+        # nvidia-smi comes with the driver; no extra apt package needed
+        # but nvtop is nice
+        case "$PM" in
+        apt)    hw+=(nvtop) ;;
+        dnf)    hw+=(nvtop) ;;
+        pacman) hw+=(nvtop) ;;
+        esac
+    fi
+
+    # AMD GPU
+    if lspci 2>/dev/null | grep -Eqi "(amd|ati).*(vga|3d|display|radeon)|radeon"; then
+        echo "  hw: AMD GPU detected"
+        case "$PM" in
+        apt)    hw+=(radeontop) ;;
+        dnf)    hw+=(radeontop) ;;
+        pacman) hw+=(radeontop) ;;
+        esac
+    fi
+
+    # Intel GPU
+    if lspci 2>/dev/null | grep -Eqi "intel.*(uhd|hd graphics|iris|xe)"; then
+        echo "  hw: Intel GPU detected"
+        case "$PM" in
+        apt)    hw+=(intel-gpu-tools) ;;
+        dnf)    hw+=(intel-gpu-tools) ;;
+        pacman) hw+=(intel-gpu-tools) ;;
+        esac
+    fi
+
+    # Intel CPU → microcode
+    if grep -qi "^vendor_id.*Intel" /proc/cpuinfo 2>/dev/null; then
+        echo "  hw: Intel CPU detected"
+        case "$PM" in
+        apt)    hw+=(intel-microcode) ;;
+        dnf)    hw+=(microcode_ctl) ;;
+        pacman) hw+=(intel-ucode) ;;
+        esac
+    fi
+
+    # AMD CPU → microcode
+    if grep -qi "^vendor_id.*AMD" /proc/cpuinfo 2>/dev/null; then
+        echo "  hw: AMD CPU detected"
+        case "$PM" in
+        apt)    hw+=(amd64-microcode) ;;
+        dnf)    hw+=(microcode_ctl) ;;
+        pacman) hw+=(amd-ucode) ;;
+        esac
+    fi
+
+    # WiFi
+    if [ -d /sys/class/ieee80211 ] && ls /sys/class/ieee80211/ 2>/dev/null | grep -q .; then
+        echo "  hw: WiFi detected"
+        case "$PM" in
+        apt)    hw+=(iw wireless-tools) ;;
+        dnf)    hw+=(iw wireless-tools) ;;
+        pacman) hw+=(iw wireless_tools) ;;
+        esac
+    fi
+
+    # Bluetooth
+    if ls /sys/class/bluetooth/ 2>/dev/null | grep -q .; then
+        echo "  hw: Bluetooth detected"
+        case "$PM" in
+        apt)    hw+=(bluez bluez-tools) ;;
+        dnf)    hw+=(bluez bluez-tools) ;;
+        pacman) hw+=(bluez bluez-utils) ;;
+        esac
+    fi
+
+    # NVMe
+    if ls /dev/nvme* 2>/dev/null | grep -q .; then
+        echo "  hw: NVMe detected"
+        case "$PM" in
+        apt)    hw+=(nvme-cli) ;;
+        dnf)    hw+=(nvme-cli) ;;
+        pacman) hw+=(nvme-cli) ;;
+        esac
+    fi
+
+    echo ""
+
+    # ── build final deduplicated list ────────────────────────────────────────
+    declare -A seen; final=()
+    list=("${min[@]}")
+    [ "$mode" = full ] && list+=("${sec[@]}" "${hw[@]}")
+    for p in "${list[@]}"; do
+        [ -n "${seen[$p]:-}" ] && continue; seen[$p]=1; final+=("$p")
+    done
+
+    echo "packages (${#final[@]}):"
+    printf '  %s\n' "${final[@]}"
+    echo ""
+
+    [ "$dry" -eq 1 ] && { echo "(dry-run)"; return; }
+
+    if [ "$YES" -eq 0 ]; then
+        printf "install? [y/N]: "
+        read -r ans
+        [[ "$ans" =~ ^[yY]$ ]] || { echo "aborted."; return; }
+    fi
+
+    case "$PM" in
+    apt)    sudo apt-get install -y "${final[@]}" ;;
+    dnf)    sudo dnf install -y "${final[@]}" ;;
+    pacman) sudo pacman -S --noconfirm "${final[@]}" ;;
+    esac
+}
+
 do_uninstall() {
     declare -A seen
     candidates=()
@@ -137,6 +319,10 @@ ACTIONS
   build      compile Go binary  /  validate Python syntax
   install    copy artifact to $BIN; creates bsc-cmd wrapper if missing
   uninstall  remove every '$NAME' binary found in PATH
+  deps       install system dependencies via apt/dnf/pacman
+               -m | minimal   basic tools only (sensors, smart, clipboard, net)
+               -f | full      + security tools + hardware-detected packages
+               --dry-run      show package list without installing
   info       show this message
 
 FLAGS
@@ -161,8 +347,9 @@ case "$ACTION" in
 build)     do_build ;;
 install)   do_install ;;
 uninstall) do_uninstall ;;
+deps)      do_deps "$@" ;;
 theme)     do_theme "$1" ;;
 info)      do_info ;;
-"")        echo "usage: bsc-cmd build|install|uninstall|theme|info [go|py] [-y]" >&2; exit 1 ;;
+"")        echo "usage: bsc-cmd build|install|uninstall|deps|theme|info [go|py] [-y]" >&2; exit 1 ;;
 *)         echo "unknown action: $ACTION" >&2; exit 1 ;;
 esac
