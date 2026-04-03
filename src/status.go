@@ -69,7 +69,11 @@ func drawStatusBar(buf *strings.Builder, rows, cols int, ui *UI, interval time.D
 
 	upS := fmtUptime(uptime)
 	date := time.Now().Format("2006-01-02 15:04")
-	right := fmt.Sprintf("├ %s | up:%s | %s | %dms ─┤", batS, upS, date, interval.Milliseconds())
+	loadStr := ""
+	if anyBgLoading() {
+		loadStr = " " + spinChar()
+	}
+	right := fmt.Sprintf("├%s %s | up:%s | %s | %dms ─┤", loadStr, batS, upS, date, interval.Milliseconds())
 
 	gap := cols - len(left) - len(right) - 2
 	if gap < 1 {

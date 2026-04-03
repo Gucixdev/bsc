@@ -256,6 +256,8 @@ func render(ss *SysState, ui *UI, t *Theme) {
 	}
 	ss.mu.RUnlock()
 
+	spinTick.Add(1)
+
 	var buf strings.Builder
 	buf.WriteString(SYNCON)
 	if t.HasBG {

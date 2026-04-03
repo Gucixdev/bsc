@@ -1828,17 +1828,21 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 
 	// firewall rules
 	addh("firewall rules")
-	iptChains, iptRules := countIPTablesRules()
-	if iptChains < 0 {
+	ipt, iptLoading := bgGetIPT()
+	if iptLoading {
+		add(ColLine{Text: "  iptables: " + spinChar(), C: inf, Dim: true})
+	} else if ipt.chains < 0 {
 		add(ColLine{Text: "  iptables: n/a", C: inf, Dim: true})
 	} else {
-		addl("iptables rules", fmt.Sprintf("%d rules in %d chains", iptRules, iptChains), bc(iptRules > 0))
+		addl("iptables rules", fmt.Sprintf("%d rules in %d chains", ipt.rules, ipt.chains), bc(ipt.rules > 0))
 	}
-	nftRules := countNFTRules()
-	if nftRules < 0 {
+	nft, nftLoading := bgGetNFT()
+	if nftLoading {
+		add(ColLine{Text: "  nftables: " + spinChar(), C: inf, Dim: true})
+	} else if nft.rules < 0 {
 		add(ColLine{Text: "  nftables: n/a", C: inf, Dim: true})
 	} else {
-		addl("nftables rules", fmt.Sprintf("%d", nftRules), bc(nftRules > 0))
+		addl("nftables rules", fmt.Sprintf("%d", nft.rules), bc(nft.rules > 0))
 	}
 
 	// group security
@@ -1877,7 +1881,12 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 
 	// access log
 	addh("access log")
-	addl("last login", checkLastLogin(), inf)
+	lastLogin, llLoading := bgGetLastLogin()
+	if llLoading {
+		addl("last login", spinChar(), inf)
+	} else {
+		addl("last login", lastLogin, inf)
+	}
 
 	// listening ports
 	addh("listening ports")
@@ -1940,25 +1949,39 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 
 	// process capabilities
 	addh("process capabilities")
-	caps := checkDangerousCaps()
-	addl("high-cap procs", fmt.Sprintf("%d", len(caps)), bc(len(caps) == 0))
-	for _, c := range caps { add(ColLine{Text: "   ! " + c, C: warn}) }
+	caps, capsLoading := bgGetCaps()
+	if capsLoading {
+		addl("high-cap procs", spinChar(), inf)
+	} else {
+		addl("high-cap procs", fmt.Sprintf("%d", len(caps)), bc(len(caps) == 0))
+		for _, c := range caps { add(ColLine{Text: "   ! " + c, C: warn}) }
+	}
 
 	// suid binaries
 	addh("suid binaries")
-	suidN := scanSUIDBins()
-	addl("suid in system dirs", fmt.Sprintf("%d", suidN), bc(suidN < 20))
+	suidN, suidLoading := bgGetSUIDs()
+	if suidLoading {
+		addl("suid in system dirs", spinChar(), inf)
+	} else {
+		addl("suid in system dirs", fmt.Sprintf("%d", suidN), bc(suidN < 20))
+	}
 
 	// world-writable
 	addh("world-writable dirs")
-	wwDirs := checkWorldWritableDirs()
-	addl("unsafe dirs in /tmp+", fmt.Sprintf("%d", len(wwDirs)), bc(len(wwDirs) == 0))
-	for _, d := range wwDirs { add(ColLine{Text: "   ! " + d, C: warn}) }
+	wwDirs, wwLoading := bgGetWWDirs()
+	if wwLoading {
+		addl("unsafe dirs in /tmp+", spinChar(), inf)
+	} else {
+		addl("unsafe dirs in /tmp+", fmt.Sprintf("%d", len(wwDirs)), bc(len(wwDirs) == 0))
+		for _, d := range wwDirs { add(ColLine{Text: "   ! " + d, C: warn}) }
+	}
 
 	// security updates
 	addh("pending updates")
-	pending := checkPendingSecUpdates()
-	if pending < 0 {
+	pending, pendLoading := bgGetPending()
+	if pendLoading {
+		addl("security updates", spinChar(), inf)
+	} else if pending < 0 {
 		add(ColLine{Text: "  n/a (no apt/dnf)", C: inf, Dim: true})
 	} else {
 		addl("security updates", fmt.Sprintf("%d", pending), bc(pending == 0))
