@@ -8,64 +8,72 @@ import (
 	"time"
 )
 
-// startTrace — polls /proc/*/syscall every 50ms
-// For each CPU, grabs first PID scheduled there → records syscall name.
-// RLE: same syscall as last entry → increment count, else append.
+// startTrace — polls /proc/*/task/*/syscall every 50ms, tracks per-TID rings.
 func startTrace(ss *SysState) {
 	go func() {
 		for {
 			time.Sleep(50 * time.Millisecond)
 
-			cpuSyscall := map[int]string{}
-			entries, _ := os.ReadDir("/proc")
-			for _, e := range entries {
-				name := e.Name()
-				if len(name) == 0 || name[0] < '0' || name[0] > '9' {
+			newSC := map[int]string{}
+			newComm := map[int]string{}
+			newPID := map[int]int{}
+
+			pids, _ := os.ReadDir("/proc")
+			for _, pe := range pids {
+				pname := pe.Name()
+				if len(pname) == 0 || pname[0] < '0' || pname[0] > '9' {
 					continue
 				}
-				stat, err := os.ReadFile("/proc/" + name + "/stat")
+				pid, err := strconv.Atoi(pname)
 				if err != nil {
 					continue
 				}
-				// parse past comm (field 2, in parens)
-				j := strings.LastIndexByte(string(stat), ')')
-				if j < 0 {
-					continue
-				}
-				rest := strings.Fields(string(stat)[j+2:])
-				// rest[36] = processor (field 39 in 1-indexed /proc/PID/stat)
-				if len(rest) < 37 {
-					continue
-				}
-				cpu, err := strconv.Atoi(rest[36])
-				if err != nil || cpu < 0 || cpu >= 256 {
-					continue
-				}
-				if _, already := cpuSyscall[cpu]; already {
-					continue
-				}
-				scData, err := os.ReadFile("/proc/" + name + "/syscall")
+				tasks, err := os.ReadDir("/proc/" + pname + "/task")
 				if err != nil {
 					continue
 				}
-				fields := strings.Fields(string(scData))
-				if len(fields) == 0 {
-					continue
+				for _, te := range tasks {
+					tname := te.Name()
+					tid, err := strconv.Atoi(tname)
+					if err != nil {
+						continue
+					}
+					scData, err := os.ReadFile("/proc/" + pname + "/task/" + tname + "/syscall")
+					if err != nil {
+						continue
+					}
+					fields := strings.Fields(string(scData))
+					if len(fields) == 0 {
+						continue
+					}
+					var sc string
+					if fields[0] == "running" {
+						sc = "running"
+					} else {
+						num, err := strconv.ParseInt(fields[0], 0, 64)
+						if err != nil {
+							continue
+						}
+						sc = syscallName(int(num))
+					}
+					newSC[tid] = sc
+					newPID[tid] = pid
+					if raw, err := os.ReadFile("/proc/" + pname + "/task/" + tname + "/comm"); err == nil {
+						newComm[tid] = strings.TrimSpace(string(raw))
+					} else {
+						newComm[tid] = pname
+					}
 				}
-				if fields[0] == "running" {
-					cpuSyscall[cpu] = "running"
-					continue
-				}
-				num, err := strconv.ParseInt(fields[0], 0, 64)
-				if err != nil {
-					continue
-				}
-				cpuSyscall[cpu] = syscallName(int(num))
 			}
 
 			ss.traceMu.Lock()
-			for cpu, sc := range cpuSyscall {
-				ring := ss.traceRings[cpu]
+			if ss.threadRings == nil {
+				ss.threadRings = map[int][]TraceEntry{}
+				ss.threadComms = map[int]string{}
+				ss.threadPIDs = map[int]int{}
+			}
+			for tid, sc := range newSC {
+				ring := ss.threadRings[tid]
 				if len(ring) > 0 && ring[len(ring)-1].Syscall == sc {
 					ring[len(ring)-1].Count++
 				} else {
@@ -74,8 +82,16 @@ func startTrace(ss *SysState) {
 						ring = ring[len(ring)-RING_CAP:]
 					}
 				}
-				ss.traceRings[cpu] = ring
+				ss.threadRings[tid] = ring
 			}
+			// remove dead threads
+			for tid := range ss.threadRings {
+				if _, alive := newSC[tid]; !alive {
+					delete(ss.threadRings, tid)
+				}
+			}
+			ss.threadComms = newComm
+			ss.threadPIDs = newPID
 			ss.traceMu.Unlock()
 		}
 	}()

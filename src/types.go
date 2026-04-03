@@ -182,11 +182,12 @@ type SysState struct {
 	HistPodRun   []float64
 	HistCores    [][]float64
 
-	HexNetBufs  map[string][]byte
-	NetCapMu    sync.Mutex
-	traceMu     sync.Mutex
-	traceRings  [256][]TraceEntry
-	traceMethod string
+	HexNetBufs   map[string][]byte
+	NetCapMu     sync.Mutex
+	traceMu      sync.Mutex
+	threadRings  map[int][]TraceEntry
+	threadComms  map[int]string
+	threadPIDs   map[int]int // TID -> PID
 }
 
 type UI struct {
@@ -227,4 +228,8 @@ type UI struct {
 	PrevSelPID     int
 	SelFade        int
 	SelArrive      int
+	AsmPID         int
+	AsmScroll      int
+	HexGotoMode    bool
+	HexGotoStr     string
 }

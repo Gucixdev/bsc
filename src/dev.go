@@ -210,46 +210,73 @@ func drawDEV(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		row = devPIDDetails(buf, row, cols, rows, ui.DetailPID, t, ui.Anon)
 	}
 
-	// ── SYSCALL TRACE ─────────────────────────────────────────────────────────
+	// ── THREAD SYSCALL TRACE ──────────────────────────────────────────────────
 	if row < rows-3 {
-		ncores := len(ss.Cores)
-		if ncores == 0 {
-			ncores = 1
-		}
-		// min 18 cols per core: fits "clock_nanosleep×NN" without truncation
-		ncols := max(1, min(ncores, cols/18))
-		ui.TraceNCols = ncols
-		coreStart := min(ui.CoreOffset, max(0, ncores-ncols))
-		ui.CoreOffset = coreStart
-
-		tHdr := "─── SYSCALL TRACE "
+		tHdr := "─── THREAD TRACE "
 		tHdr = clampStr(tHdr+strings.Repeat("─", max(0, cols-len(tHdr))), cols)
 		buf.WriteString(pos(row, 0))
 		buf.WriteString(ansiCol(t.HDR) + tHdr + RESET + CLEOL)
 		row++
 
-		traceRows := rows - row - 2 // leave row for hints + statusbar
+		traceRows := rows - row - 2
 		if traceRows < 1 {
 			traceRows = 1
 		}
-		colW := cols / ncols
 
 		ss.traceMu.Lock()
+
+		// collect TIDs: prefer threads of DetailPID, else top-N by ring size
+		type tidEntry struct {
+			tid  int
+			comm string
+			ring []TraceEntry
+		}
+		var entries []tidEntry
+		filterPID := ui.DetailPID
+		for tid, ring := range ss.threadRings {
+			if filterPID != 0 && ss.threadPIDs[tid] != filterPID {
+				continue
+			}
+			entries = append(entries, tidEntry{tid, ss.threadComms[tid], append([]TraceEntry(nil), ring...)})
+		}
+		// sort by ring length desc (most active first)
+		for i := 1; i < len(entries); i++ {
+			for j := i; j > 0 && len(entries[j].ring) > len(entries[j-1].ring); j-- {
+				entries[j], entries[j-1] = entries[j-1], entries[j]
+			}
+		}
+		ss.traceMu.Unlock()
+
+		ncols := max(1, min(len(entries), cols/18))
+		if ncols == 0 {
+			ncols = 1
+		}
+		ui.TraceNCols = ncols
+		tidStart := min(ui.CoreOffset, max(0, len(entries)-ncols))
+		ui.CoreOffset = tidStart
+		colW := cols / ncols
+
 		var traceCols [][]ColLine
 		var traceWidths []int
 		for ci := 0; ci < ncols; ci++ {
-			cpu := coreStart + ci
-			ss_ring := ss.traceRings[cpu]
-			// newest first, offset by DevScroll
-			total := len(ss_ring)
-			hdr := fmt.Sprintf(" c%d[%d]", cpu, total)
+			idx := tidStart + ci
+			var ring []TraceEntry
+			var hdr string
+			if idx < len(entries) {
+				e := entries[idx]
+				ring = e.ring
+				hdr = fmt.Sprintf(" %d:%s", e.tid, e.comm)
+			} else {
+				hdr = " -"
+			}
+			total := len(ring)
 			lines := []ColLine{{Text: hdr, C: t.CPU, Bold: true}}
 			for ri := 0; ri < traceRows-1; ri++ {
-				idx := total - 1 - (ui.DevScroll + ri)
-				if idx < 0 {
+				ridx := total - 1 - (ui.DevScroll + ri)
+				if ridx < 0 {
 					break
 				}
-				e := ss_ring[idx]
+				e := ring[ridx]
 				text := e.Syscall
 				if e.Count > 1 {
 					text = fmt.Sprintf("%s×%d", e.Syscall, e.Count)
@@ -263,7 +290,6 @@ func drawDEV(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 			}
 			traceWidths = append(traceWidths, w)
 		}
-		ss.traceMu.Unlock()
 
 		renderCols(buf, row, traceRows, traceCols, traceWidths, t)
 		row += traceRows

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -216,6 +217,9 @@ func collectAll(ss *SysState) {
 
 func render(ss *SysState, ui *UI, t *Theme) {
 	rows, cols := winSize()
+	if rows < 5 || cols < 20 {
+		return
+	}
 
 	ss.mu.RLock()
 	cores := ss.Cores
@@ -269,6 +273,8 @@ func render(ss *SysState, ui *UI, t *Theme) {
 		drawSEC(&buf, rows, cols, ss, ui, t)
 	case TAB_HEX:
 		drawHEX(&buf, rows, cols, ss, ui, t)
+	case TAB_ASM:
+		drawASM(&buf, rows, cols, ss, ui, t)
 	}
 
 	buf.WriteString(SYNCOFF)
@@ -296,6 +302,32 @@ func sendSignal(ss *SysState, ui *UI, sig syscall.Signal) {
 }
 
 func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
+	if ui.Tab == TAB_HEX && ui.HexGotoMode {
+		switch b {
+		case '\033':
+			ui.HexGotoMode = false
+			ui.HexGotoStr = ""
+		case '\r', '\n':
+			ui.HexGotoMode = false
+			if ui.HexGotoStr != "" {
+				off, err := strconv.ParseInt(ui.HexGotoStr, 16, 64)
+				if err == nil && off >= 0 {
+					bpr := 16 // approximate; exact computed in render
+					ui.HexScroll = int(off) / bpr
+				}
+			}
+			ui.HexGotoStr = ""
+		case '\x08', 127:
+			if len(ui.HexGotoStr) > 0 {
+				ui.HexGotoStr = ui.HexGotoStr[:len(ui.HexGotoStr)-1]
+			}
+		default:
+			if (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F') {
+				ui.HexGotoStr += string(b)
+			}
+		}
+		return false
+	}
 	if ui.Tab == TAB_HEX && ui.HexSearchMode {
 		switch b {
 		case '\033':
@@ -348,8 +380,13 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 		ui.Tab = TAB_SEC
 	case '4':
 		ui.Tab = TAB_HEX
+	case '5':
+		ui.Tab = TAB_ASM
+		if ui.AsmPID == 0 {
+			ui.AsmPID = ui.SelPID
+		}
 	case '\t':
-		ui.Tab = (ui.Tab + 1) % 4
+		ui.Tab = (ui.Tab + 1) % 5
 	case '+', '=':
 		ui.Interval += 100 * time.Millisecond
 		if ui.Interval > 10*time.Second {
@@ -385,15 +422,6 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 	case 'd':
 		if ui.Tab == TAB_OVW {
 			ui.Tab = TAB_DEV
-		}
-	case 'p':
-		if ui.Tab == TAB_HEX {
-			ss.mu.RLock()
-			if len(ss.Procs) > 0 {
-				ui.HexPID = ss.Procs[0].PID
-			}
-			ss.mu.RUnlock()
-			ui.HexScroll = 0
 		}
 	case 'l':
 		if ui.Tab == TAB_HEX {
@@ -440,6 +468,55 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 					break
 				}
 			}
+		}
+	case 'g':
+		if ui.Tab == TAB_HEX {
+			ui.HexGotoMode = true
+			ui.HexGotoStr = ""
+		} else if ui.Tab == TAB_ASM {
+			// go to top
+			ui.AsmScroll = 0
+		}
+	case 'G':
+		if ui.Tab == TAB_ASM {
+			asmMu.Lock()
+			n := len(asmCache.lines)
+			asmMu.Unlock()
+			if n > 0 {
+				ui.AsmScroll = n - 1
+			}
+		}
+	case 'S':
+		if ui.Tab == TAB_HEX {
+			go hexSaveDump(ss, ui)
+		}
+	case 'p':
+		if ui.Tab == TAB_HEX {
+			ss.mu.RLock()
+			if len(ss.Procs) > 0 {
+				ui.HexPID = ss.Procs[0].PID
+			}
+			ss.mu.RUnlock()
+			ui.HexScroll = 0
+		} else if ui.Tab == TAB_ASM {
+			if ui.SelPID != 0 {
+				ui.AsmPID = ui.SelPID
+				ui.AsmScroll = 0
+			}
+		}
+	case 'n':
+		if ui.Tab == TAB_ASM {
+			asmMu.Lock()
+			lines := asmCache.lines
+			asmMu.Unlock()
+			asmNextFn(ui, lines, +1)
+		}
+	case 'N':
+		if ui.Tab == TAB_ASM {
+			asmMu.Lock()
+			lines := asmCache.lines
+			asmMu.Unlock()
+			asmNextFn(ui, lines, -1)
 		}
 	case '/':
 		if ui.Tab == TAB_HEX {
@@ -517,6 +594,15 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 		if ui.Tab == TAB_OVW {
 			sendSignal(ss, ui, syscall.SIGKILL)
 		}
+	case 'K':
+		if ui.Tab == TAB_OVW && len(ui.Marked) > 0 {
+			for pid, marked := range ui.Marked {
+				if marked {
+					syscall.Kill(pid, syscall.SIGKILL)
+				}
+			}
+			ui.Marked = nil
+		}
 	case '9':
 		sendSignal(ss, ui, syscall.SIGKILL)
 	case '\033':
@@ -560,7 +646,7 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 		return
 	}
 	if len(seq) == 2 && seq[0] == '[' && seq[1] == 'Z' {
-		ui.Tab = (ui.Tab + 3) % 4 // prev tab
+		ui.Tab = (ui.Tab + 4) % 5 // prev tab
 		return
 	}
 	if len(seq) < 2 || seq[0] != '[' {
@@ -583,6 +669,10 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 			if ui.SecScroll > 0 {
 				ui.SecScroll--
 			}
+		case TAB_ASM:
+			if ui.AsmScroll > 0 {
+				ui.AsmScroll--
+			}
 		}
 	case seq[1] == 'B':
 		switch ui.Tab {
@@ -594,6 +684,8 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 			ui.DevScroll++
 		case TAB_SEC:
 			ui.SecScroll++
+		case TAB_ASM:
+			ui.AsmScroll++
 		}
 	case len(seq) == 5 && seq[1] == '1' && seq[2] == ';' && seq[3] == '2' && seq[4] == 'A':
 		switch ui.Tab {
@@ -603,6 +695,8 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 			if ui.HexScroll > 5 { ui.HexScroll -= 5 } else { ui.HexScroll = 0 }
 		case TAB_DEV:
 			if ui.DevScroll > 5 { ui.DevScroll -= 5 } else { ui.DevScroll = 0 }
+		case TAB_ASM:
+			if ui.AsmScroll > 5 { ui.AsmScroll -= 5 } else { ui.AsmScroll = 0 }
 		}
 	case len(seq) == 5 && seq[1] == '1' && seq[2] == ';' && seq[3] == '2' && seq[4] == 'B':
 		switch ui.Tab {
@@ -612,6 +706,8 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 			ui.HexScroll += 5
 		case TAB_DEV:
 			ui.DevScroll += 5
+		case TAB_ASM:
+			ui.AsmScroll += 5
 		}
 	case seq[1] == 'C':
 		switch ui.Tab {
@@ -627,6 +723,8 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 			ui.HexScroll = 0
 		case TAB_DEV:
 			ui.CoreOffset += max(1, ui.TraceNCols)
+		case TAB_ASM:
+			asmSelectPID(ui, ss, +1)
 		}
 	case seq[1] == 'D':
 		switch ui.Tab {
@@ -651,23 +749,19 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 			} else {
 				ui.CoreOffset = 0
 			}
+		case TAB_ASM:
+			asmSelectPID(ui, ss, -1)
 		}
 	case len(seq) >= 3 && seq[1] == '5' && seq[2] == '~':
 		switch ui.Tab {
 		case TAB_OVW:
 			ui.SelDelta -= 10
 		case TAB_HEX:
-			if ui.HexScroll > 10 {
-				ui.HexScroll -= 10
-			} else {
-				ui.HexScroll = 0
-			}
+			if ui.HexScroll > 10 { ui.HexScroll -= 10 } else { ui.HexScroll = 0 }
 		case TAB_DEV:
-			if ui.DevScroll > 10 {
-				ui.DevScroll -= 10
-			} else {
-				ui.DevScroll = 0
-			}
+			if ui.DevScroll > 10 { ui.DevScroll -= 10 } else { ui.DevScroll = 0 }
+		case TAB_ASM:
+			if ui.AsmScroll > 10 { ui.AsmScroll -= 10 } else { ui.AsmScroll = 0 }
 		}
 	case len(seq) >= 3 && seq[1] == '6' && seq[2] == '~':
 		switch ui.Tab {
@@ -677,6 +771,8 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 			ui.HexScroll += 10
 		case TAB_DEV:
 			ui.DevScroll += 10
+		case TAB_ASM:
+			ui.AsmScroll += 10
 		}
 	}
 }
@@ -699,6 +795,18 @@ func clipCopy(s string) {
 
 
 func main() {
+	if os.Getuid() != 0 {
+		cmd := exec.Command("sudo", os.Args...)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintln(os.Stderr, "bsc: needs root; sudo failed:", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	tc := os.Getenv("COLORTERM")
 	term := os.Getenv("TERM")
 	truecolor = tc == "truecolor" || tc == "24bit" ||
