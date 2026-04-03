@@ -30,20 +30,24 @@ func drawStatusBar(buf *strings.Builder, rows, cols int, ui *UI, interval time.D
 	var local string
 	switch ui.Tab {
 	case TAB_OVW:
-		local = " | ↑↓=sel ←→=filter c/m=sort f=freeze k=kill y=pid Y=cmd Space=mark"
+		local = " | ↑↓=sel ←→=filter c/m=sort f=freeze k=kill K=killmarked y=pid Space=mark"
 		if ui.Frozen {
 			local += " [FROZEN]"
 		}
 	case TAB_DEV:
-		local = " | ↑↓=scroll ←→=cores"
+		local = " | ↑↓=scroll ←→=threads"
 	case TAB_SEC:
 		local = " | ↑↓=scroll"
 	case TAB_HEX:
 		srcName := [4]string{"MEM", "DISK", "NET", "VRAM"}[ui.HexSource]
-		local = fmt.Sprintf(" | ↑↓=scroll ←→=sel w=src l=lock /=search  src:%s", srcName)
-		if ui.HexSource == HEX_NET && ui.NetLock {
+		local = fmt.Sprintf(" | ↑↓=scroll ←→=sel w=src g=goto S=save /=search  src:%s", srcName)
+		if ui.HexGotoMode {
+			local = fmt.Sprintf(" | goto:0x%s_", ui.HexGotoStr)
+		} else if ui.HexSource == HEX_NET && ui.NetLock {
 			local += " [LOCK]"
 		}
+	case TAB_ASM:
+		local = " | ↑↓=scroll ←→=pid p=selproc n/N=nextfn g=top"
 	}
 	left := global + local
 
