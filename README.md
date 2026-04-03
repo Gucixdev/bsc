@@ -1,22 +1,28 @@
 # bsc
 
-TUI system monitor. Go, no deps, static binary.
+TUI system monitor. Go, no deps, static binary. Requires root.
 
 ```
 bash scripts/bsc-cmd build go
 bash scripts/bsc-cmd install go -y
-bsc
+bsc        # auto re-execs via sudo if not root
 ```
 
 ---
 
-**OVW** — CPU per-core (freq/temp/turbo/throttle/RAPL) · RAM/swap/zram · GPU (nvidia/amd/intel) · disk (MB/s, IOPS, latency, SMART) · net (rx/tx, IP, wifi SSID/signal) · VMs/containers · audio servers · hooks · process list
+![OVW](screenshots/ovw.png)
 
-**DEV** — kernel cmdline · sysctl · IRQs · CPU flags · syscall trace (eBPF/perf/proc) · registers + disasm
+---
 
-**SEC** — kernel hardening · taint · rootkit indicators · firewall/AppArmor/SELinux/firejail · network vulns · listening ports · connections · users
+**OVW** — CPU per-core (freq/temp/turbo/throttle/RAPL) · RAM/swap/zram · GPU (nvidia/amd/intel) · disk (MB/s, IOPS, latency, SMART) · net (rx/tx, IP, wifi SSID/signal) · VMs/containers · audio servers · hooks · process list with space-mark + batch kill
 
-**HEX** — process memory · raw block device · packet capture (AF_PACKET)
+**DEV** — memory map · scheduler · kernel tunables · CPU flags · IRQs · kernel log · thread syscall trace per-TID
+
+**SEC** — kernel hardening · taint · rootkit indicators · hardware security (IOMMU/microcode) · firewall · group security · entropy · timesync · firewall rules · AppArmor/SELinux · network vulns · listening ports · users · cpu vulnerabilities
+
+**HEX** — process memory · raw block device · packet capture (AF_PACKET) · VRAM BAR1 dump
+
+**ASM** — live disassembly via objdump, per-process, function navigation
 
 ---
 
