@@ -54,7 +54,8 @@ func vramBarSize(pciBase string) int64 {
 
 // vramMapData holds the mmap'd VRAM BAR slice + file descriptor
 type vramMapData struct {
-	data   []byte
+	data   []byte   // mmap'd data; nil if using file mode
+	file   *os.File // file handle for per-read fallback; nil if mmap ok
 	size   int64
 	pciDev string
 	err    string
@@ -96,16 +97,18 @@ func openVRAMBar() vramMapData {
 		vramCache = vramMapData{pciDev: pci, err: "resource1: " + err.Error()}
 		return vramCache
 	}
-	// NOTE: we intentionally do NOT close f — the mmap needs it alive
-	// This is fine since bsc runs as a daemon
-
 	data, err2 := syscall.Mmap(int(f.Fd()), 0, int(mapSize),
 		syscall.PROT_READ, syscall.MAP_SHARED)
 	if err2 != nil {
-		f.Close()
-		vramCache = vramMapData{pciDev: pci, err: "mmap resource1: " + err2.Error()}
+		// mmap failed (common on some NVIDIA configs) — fall back to file reads
+		vramCache = vramMapData{
+			file:   f,
+			size:   barSize,
+			pciDev: pci,
+		}
 		return vramCache
 	}
+	f.Close()
 
 	vramCache = vramMapData{
 		data:   data,
@@ -240,7 +243,10 @@ func drawHexVRAM(buf *strings.Builder, rows, cols, paneW, sepX, dumpX, dumpW, bp
 	// clear top rows that may have stale content from previous hex source
 	buf.WriteString(pos(1, dumpX) + CLEOL)
 
-	totalBytes := int64(len(vm.data))
+	totalBytes := vm.size
+	if vm.data != nil {
+		totalBytes = int64(len(vm.data))
+	}
 	scroll := int64(ui.HexScroll) * int64(bpr)
 	if scroll > totalBytes {
 		scroll = totalBytes
@@ -257,12 +263,16 @@ func drawHexVRAM(buf *strings.Builder, rows, cols, paneW, sepX, dumpX, dumpW, bp
 			end = totalBytes
 		}
 		chunk := make([]byte, bpr)
-		// safe copy from mmap — VRAM may have bus errors on some addresses
-		func() {
-			defer func() { recover() }() //nolint — bus error recovery
-			n := copy(chunk, vm.data[off:end])
-			_ = n
-		}()
+		if vm.data != nil {
+			// mmap path — safe copy with bus error recovery
+			func() {
+				defer func() { recover() }()
+				copy(chunk, vm.data[off:end])
+			}()
+		} else if vm.file != nil {
+			// file read path
+			vm.file.ReadAt(chunk, off)
+		}
 
 		allZero := true
 		for _, b := range chunk[:end-off] {

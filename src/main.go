@@ -880,13 +880,16 @@ func main() {
 		}
 	}()
 
-	inputCh := make(chan byte, 64)
+	inputCh := make(chan byte, 1024)
 	go func() {
-		buf := make([]byte, 32)
+		buf := make([]byte, 64)
 		for {
 			n, _ := os.Stdin.Read(buf)
 			for i := 0; i < n; i++ {
-				inputCh <- buf[i]
+				select {
+				case inputCh <- buf[i]:
+				default: // drop if full — prevents blocking on key flood
+				}
 			}
 		}
 	}()
@@ -911,6 +914,18 @@ func main() {
 		case b := <-inputCh:
 			if handleKey(b, inputCh, ui, ss) {
 				return
+			}
+			// drain any additionally buffered input before rendering once
+		drainLoop:
+			for {
+				select {
+				case b2 := <-inputCh:
+					if handleKey(b2, inputCh, ui, ss) {
+						return
+					}
+				default:
+					break drainLoop
+				}
 			}
 			if isForeground() {
 				render(ss, ui, &theme)
