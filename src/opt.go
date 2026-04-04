@@ -16,7 +16,6 @@ func readSysctlOpt(key string) string {
 	return strings.TrimSpace(string(raw))
 }
 
-
 func governorSummary() (string, bool) {
 	entries, _ := os.ReadDir("/sys/devices/system/cpu")
 	counts := map[string]int{}
@@ -52,7 +51,6 @@ func ioSchedulers() []string {
 			continue
 		}
 		sched := strings.TrimSpace(string(raw))
-		// extract active scheduler (in brackets)
 		if i := strings.Index(sched, "["); i >= 0 {
 			if j := strings.Index(sched, "]"); j > i {
 				sched = sched[i+1 : j]
@@ -86,37 +84,25 @@ func checkTHP() string {
 	return s
 }
 
-func drawOPT(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Theme) {
-	hdr := " DEV · OPT " + strings.Repeat("─", max(0, cols-11))
-	buf.WriteString(pos(0, 0))
-	buf.WriteString(ansiCol(t.HDR) + BOLD + clampStr(hdr, cols) + RESET + CLEOL)
+type optItem struct {
+	label string
+	val   string
+	good  bool
+	note  string
+	dim   bool
+}
 
-	ok   := t.DISK
-	warn := t.WARN
-	inf  := t.USB
-
-	bc := func(good bool) Color {
-		if good { return ok }
-		return warn
-	}
-
-	type item struct {
-		label string
-		val   string
-		good  bool
-		note  string
-		dim   bool
-	}
-	var items []item
+func collectOPT() []optItem {
+	var items []optItem
 
 	section := func(name string) {
-		items = append(items, item{label: "\x00" + name})
+		items = append(items, optItem{label: "\x00" + name})
 	}
 	add := func(label, val string, good bool, note string) {
-		items = append(items, item{label: label, val: val, good: good, note: note})
+		items = append(items, optItem{label: label, val: val, good: good, note: note})
 	}
 	na := func(label string) {
-		items = append(items, item{label: label, val: "n/a", good: true, dim: true})
+		items = append(items, optItem{label: label, val: "n/a", good: true, dim: true})
 	}
 
 	// ── CPU ──────────────────────────────────────────────────────────────────
@@ -212,7 +198,9 @@ func drawOPT(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	add("inotify.max_user_watches", inoti, iN >= 65536, "≥65536 for IDEs/large projects")
 
 	fdNr := readSysctlOpt("fs.file-nr")
-	add("open file handles", strings.Fields(fdNr)[0], true, "")
+	if f := strings.Fields(fdNr); len(f) > 0 {
+		add("open file handles", f[0], true, "")
+	}
 
 	noatimeMounts := 0
 	if raw, err := os.ReadFile("/proc/mounts"); err == nil {
@@ -224,7 +212,25 @@ func drawOPT(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	}
 	add("noatime/relatime mounts", fmt.Sprintf("%d", noatimeMounts), noatimeMounts > 0, "reduces disk writes")
 
-	// ── render ───────────────────────────────────────────────────────────────
+	return items
+}
+
+func drawOPT(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Theme) {
+	hdr := " DEV · OPT " + strings.Repeat("─", max(0, cols-11))
+	buf.WriteString(pos(0, 0))
+	buf.WriteString(ansiCol(t.HDR) + BOLD + clampStr(hdr, cols) + RESET + CLEOL)
+
+	ok   := t.DISK
+	warn := t.WARN
+	inf  := t.USB
+
+	bc := func(good bool) Color {
+		if good { return ok }
+		return warn
+	}
+
+	items, loading := bgOPT.get(collectOPT)
+
 	contentRows := rows - 2
 	maxScroll := max(0, len(items)-contentRows)
 	if ui.OptScroll > maxScroll {
@@ -242,7 +248,6 @@ func drawOPT(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		it := items[idx]
 		var line string
 		if strings.HasPrefix(it.label, "\x00") {
-			// section header
 			name := it.label[1:]
 			line = ansiCol(t.HDR) + BOLD + name + RESET + ansiCol(t.HDR) +
 				strings.Repeat("─", max(0, cols-len(name)-1)) + RESET
@@ -263,7 +268,6 @@ func drawOPT(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		buf.WriteString(clampVisual(line, cols) + CLEOL)
 	}
 
+	_ = loading
 	drawStatusBar(buf, rows, cols, ui, ui.Interval, ss, t)
 }
-
-// checkServiceRunning is already in sec.go

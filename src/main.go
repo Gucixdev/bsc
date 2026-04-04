@@ -902,6 +902,7 @@ func main() {
 	signal.Notify(sigStop, syscall.SIGTSTP)
 	signal.Notify(sigCont, syscall.SIGCONT)
 
+	var lastKeyRender time.Time
 	for {
 		select {
 		case <-sigStop:
@@ -915,20 +916,12 @@ func main() {
 			if handleKey(b, inputCh, ui, ss) {
 				return
 			}
-			// drain any additionally buffered input before rendering once
-		drainLoop:
-			for {
-				select {
-				case b2 := <-inputCh:
-					if handleKey(b2, inputCh, ui, ss) {
-						return
-					}
-				default:
-					break drainLoop
-				}
-			}
 			if isForeground() {
-				render(ss, ui, &theme)
+				now := time.Now()
+				if now.Sub(lastKeyRender) >= 16*time.Millisecond {
+					render(ss, ui, &theme)
+					lastKeyRender = now
+				}
 			}
 		case <-time.After(time.Duration(collectIntervalNs.Load())):
 			if ui.Recording {
