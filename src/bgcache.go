@@ -50,13 +50,14 @@ type iptResult struct{ chains, rules int }
 type nftResult struct{ rules int }
 
 var (
-	bgPending  = &bgVal[int]{ttl: 5 * time.Minute}
-	bgSUIDs    = &bgVal[int]{ttl: 2 * time.Minute}
-	bgIPT      = &bgVal[iptResult]{ttl: 15 * time.Second}
-	bgNFT      = &bgVal[nftResult]{ttl: 15 * time.Second}
+	bgPending   = &bgVal[int]{ttl: 5 * time.Minute}
+	bgSUIDs     = &bgVal[int]{ttl: 2 * time.Minute}
+	bgIPT       = &bgVal[iptResult]{ttl: 15 * time.Second}
+	bgNFT       = &bgVal[nftResult]{ttl: 15 * time.Second}
 	bgLastLogin = &bgVal[string]{ttl: 30 * time.Second}
-	bgCaps     = &bgVal[[]string]{ttl: 10 * time.Second}
-	bgWWDirs   = &bgVal[[]string]{ttl: 30 * time.Second}
+	bgCaps      = &bgVal[[]string]{ttl: 10 * time.Second}
+	bgWWDirs    = &bgVal[[]string]{ttl: 30 * time.Second}
+	bgOPT       = &bgVal[[]optItem]{ttl: 5 * time.Second}
 )
 
 func bgGetPending() (int, bool) {
@@ -105,6 +106,7 @@ func anyBgLoading() bool {
 		func() bool { bgLastLogin.mu.Lock(); v := bgLastLogin.loading; bgLastLogin.mu.Unlock(); return v },
 		func() bool { bgCaps.mu.Lock(); v := bgCaps.loading; bgCaps.mu.Unlock(); return v },
 		func() bool { bgWWDirs.mu.Lock(); v := bgWWDirs.loading; bgWWDirs.mu.Unlock(); return v },
+		func() bool { bgOPT.mu.Lock(); v := bgOPT.loading; bgOPT.mu.Unlock(); return v },
 		func() bool { asmMu.Lock(); v := asmCache.loading; asmMu.Unlock(); return v },
 	} {
 		if check() {
