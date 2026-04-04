@@ -164,15 +164,21 @@ func asmOpColor(op string, t *Theme) string {
 func drawASM(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Theme) {
 	dim := DIM + ansiCol(t.USB)
 
-	// pick a PID to show
+	// pick a PID to show — skip kernel threads (no exe)
 	pid := ui.AsmPID
-	if pid == 0 {
+	if pid == 0 || func() bool {
+		_, err := os.Lstat(fmt.Sprintf("/proc/%d/exe", pid))
+		return err != nil
+	}() {
 		ss.mu.RLock()
-		if len(ss.Procs) > 0 {
-			pid = ss.Procs[0].PID
-			ui.AsmPID = pid
+		for _, p := range ss.Procs {
+			if _, err := os.Lstat(fmt.Sprintf("/proc/%d/exe", p.PID)); err == nil {
+				pid = p.PID
+				break
+			}
 		}
 		ss.mu.RUnlock()
+		ui.AsmPID = pid
 	}
 
 	// header
@@ -308,7 +314,9 @@ func asmPIDList(ss *SysState) []int {
 	defer ss.mu.RUnlock()
 	var pids []int
 	for _, p := range ss.Procs {
-		pids = append(pids, p.PID)
+		if _, err := os.Lstat(fmt.Sprintf("/proc/%d/exe", p.PID)); err == nil {
+			pids = append(pids, p.PID)
+		}
 	}
 	sort.Ints(pids)
 	return pids
