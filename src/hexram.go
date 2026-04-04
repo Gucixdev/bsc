@@ -145,5 +145,5 @@ func drawHexMEM(buf *strings.Builder, rows, cols, paneW, sepX, dumpX, dumpW, bpr
 	n, _ := f.ReadAt(raw, readAt)
 	data := raw[:n]
 
-	renderHexDump(buf, 2, rows-2, dumpX, dumpW, bpr, data, readAt, search, t)
+	renderHexDump(buf, 2, rows-2, dumpX, dumpW, bpr, data, readAt, search, ui.HexSkipZero, t)
 }

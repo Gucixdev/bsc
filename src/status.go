@@ -20,70 +20,86 @@ func fmtUptime(secs int64) string {
 }
 
 func drawStatusBar(buf *strings.Builder, rows, cols int, ui *UI, interval time.Duration, ss *SysState, t *Theme) {
-	global := "q Tab=cycle +/-=ms R=rec a=anon"
-	if ui.Recording {
-		global += " [REC]"
-	}
-	if ui.Anon {
-		global += " [ANON]"
-	}
-	var local string
+	var left string
 	switch ui.Tab {
 	case TAB_OVW:
-		local = " | ↑↓=sel ←→=filter c/m=sort f=freeze k=kill K=killmarked y=pid Space=mark"
+		left = "OVW  ↑↓ ←→filter  c/m=sort  f=frz  k=kill  spc=mark  y=pid"
 		if ui.Frozen {
-			local += " [FROZEN]"
+			left += "  [FRZ]"
 		}
 	case TAB_DEV:
-		pages := [3]string{"DEV", "SEC", "OPT"}
-		local = fmt.Sprintf(" | ↑↓=scroll w=page [%s]", pages[ui.DevPage])
+		pages := [3]string{"MAIN", "SEC", "OPT"}
+		left = fmt.Sprintf("DEV[%s]  ↑↓  Alt=page", pages[ui.DevPage])
 		if ui.DevPage == DEV_MAIN {
-			local += " ←→=threads"
+			left += "  ←→=threads"
 		}
 	case TAB_HEX:
 		srcName := [4]string{"MEM", "DISK", "NET", "VRAM"}[ui.HexSource]
-		local = fmt.Sprintf(" | ↑↓=scroll ←→=sel w=src l=lock /=search  src:%s", srcName)
+		skipMark := ""
+		if ui.HexSkipZero {
+			skipMark = "  [0skip]"
+		}
+		left = fmt.Sprintf("HEX[%s]  ↑↓  Alt=src  ←→=sel  /=search  z=0skip%s", srcName, skipMark)
 		if ui.HexSource == HEX_NET && ui.NetLock {
-			local += " [LOCK]"
+			left += "  [LOCK]"
 		}
 	case TAB_ASM:
-		local = " | ↑↓=scroll ←→=pid p=selproc n/N=nextfn g=top"
+		left = "ASM  ↑↓  ←→=pid  n/N=fn  p=sel  g=top  Alt=src"
 	}
-	left := global + local
+
+	flags := ""
+	if ui.Recording {
+		flags += " REC"
+	}
+	if ui.Anon {
+		flags += " ANON"
+	}
+	if flags != "" {
+		left += " [" + flags[1:] + "]"
+	}
 
 	ss.mu.RLock()
 	batt := ss.Battery
 	uptime := ss.Uptime
 	ss.mu.RUnlock()
 
-	batS := "no bat"
+	batS := ""
 	if batt.Pct > 0 || batt.Charging {
 		arrow := "="
 		if batt.Charging {
-			arrow = "+"
+			arrow = "↑"
 		} else if !batt.Full {
-			arrow = "-"
+			arrow = "↓"
 		}
-		batS = fmt.Sprintf("BAT:%d%%%s", batt.Pct, arrow)
+		batS = fmt.Sprintf(" %d%%%s", batt.Pct, arrow)
 	}
 
-	upS := fmtUptime(uptime)
-	date := time.Now().Format("2006-01-02 15:04")
-	loadStr := ""
+	spin := ""
 	if anyBgLoading() {
-		loadStr = " " + spinChar()
+		spin = spinChar() + " "
 	}
-	right := fmt.Sprintf("├%s %s | up:%s | %s | %dms ─┤", loadStr, batS, upS, date, interval.Milliseconds())
 
-	gap := cols - len(left) - len(right) - 2
+	right := fmt.Sprintf("%sup%s%s %s %dms",
+		spin,
+		fmtUptime(uptime),
+		batS,
+		time.Now().Format("15:04"),
+		interval.Milliseconds(),
+	)
+
+	// use rune count to handle Unicode arrows correctly
+	leftW := len([]rune(left))
+	rightW := len([]rune(right))
+	gap := cols - leftW - rightW - 2
 	if gap < 1 {
 		gap = 1
 	}
-	bar := " " + left + strings.Repeat(" ", gap) + right
+
+	bar := " " + left + strings.Repeat(" ", gap) + right + " "
 	runes := []rune(bar)
 	if len(runes) > cols {
 		bar = string(runes[:cols])
-	} else {
+	} else if len(runes) < cols {
 		bar = bar + strings.Repeat(" ", cols-len(runes))
 	}
 

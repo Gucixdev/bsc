@@ -167,12 +167,12 @@ func drawASM(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	// pick a PID to show — skip kernel threads (no exe)
 	pid := ui.AsmPID
 	if pid == 0 || func() bool {
-		_, err := os.Lstat(fmt.Sprintf("/proc/%d/exe", pid))
+		_, err := os.Stat(fmt.Sprintf("/proc/%d/exe", pid))
 		return err != nil
 	}() {
 		ss.mu.RLock()
 		for _, p := range ss.Procs {
-			if _, err := os.Lstat(fmt.Sprintf("/proc/%d/exe", p.PID)); err == nil {
+			if _, err := os.Stat(fmt.Sprintf("/proc/%d/exe", p.PID)); err == nil {
 				pid = p.PID
 				break
 			}
@@ -314,7 +314,7 @@ func asmPIDList(ss *SysState) []int {
 	defer ss.mu.RUnlock()
 	var pids []int
 	for _, p := range ss.Procs {
-		if _, err := os.Lstat(fmt.Sprintf("/proc/%d/exe", p.PID)); err == nil {
+		if _, err := os.Stat(fmt.Sprintf("/proc/%d/exe", p.PID)); err == nil {
 			pids = append(pids, p.PID)
 		}
 	}

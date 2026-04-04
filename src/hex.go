@@ -199,13 +199,20 @@ func drawLeftPane(buf *strings.Builder, screenRow, paneH, paneW int, lines []str
 
 // renderHexDump — fills rows [startRow, endRow) in dump pane (at dumpX)
 func renderHexDump(buf *strings.Builder, startRow, endRow, dumpX, dumpW, bpr int,
-	data []byte, baseAddr int64, search []byte, t *Theme) {
+	data []byte, baseAddr int64, search []byte, skipZero bool, t *Theme) {
 
+	dim := DIM + ansiCol(t.USB)
 	row := startRow
+	zeroRun := 0
 	for off := 0; row < endRow; off += bpr {
-		buf.WriteString(pos(row, dumpX))
 		if off >= len(data) {
-			buf.WriteString(CLEOL)
+			if zeroRun > 0 {
+				buf.WriteString(pos(row, dumpX))
+				buf.WriteString(dim + fmt.Sprintf("  ··· %d zero rows", zeroRun) + RESET + CLEOL)
+				row++
+				zeroRun = 0
+			}
+			buf.WriteString(pos(row, dumpX) + CLEOL)
 			row++
 			continue
 		}
@@ -215,15 +222,34 @@ func renderHexDump(buf *strings.Builder, startRow, endRow, dumpX, dumpW, bpr int
 		}
 		chunk := data[off:end]
 
+		if skipZero && allZero(chunk) {
+			zeroRun++
+			continue
+		}
+		if zeroRun > 0 && row < endRow {
+			buf.WriteString(pos(row, dumpX))
+			buf.WriteString(dim + fmt.Sprintf("  ··· %d zero rows", zeroRun) + RESET + CLEOL)
+			row++
+			zeroRun = 0
+		}
+		if row >= endRow {
+			break
+		}
 		var lineCol string
 		if allZero(chunk) {
-			lineCol = DIM + ansiCol(t.USB)
+			lineCol = dim
 		} else {
 			lineCol = ansiCol(t.DISK)
 		}
 		line := hexLine(baseAddr, off, chunk, bpr, search, lineCol, t)
 		line = clampVisual(line, dumpW)
+		buf.WriteString(pos(row, dumpX))
 		buf.WriteString(lineCol + line + RESET + CLEOL)
+		row++
+	}
+	if zeroRun > 0 && row < endRow {
+		buf.WriteString(pos(row, dumpX))
+		buf.WriteString(dim + fmt.Sprintf("  ··· %d zero rows", zeroRun) + RESET + CLEOL)
 		row++
 	}
 }

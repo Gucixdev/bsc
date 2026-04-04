@@ -79,5 +79,5 @@ func drawHexDISK(buf *strings.Builder, rows, cols, paneW, sepX, dumpX, dumpW, bp
 		}
 		return
 	}
-	renderHexDump(buf, 2, rows-2, dumpX, dumpW, bpr, data, baseOff, search, t)
+	renderHexDump(buf, 2, rows-2, dumpX, dumpW, bpr, data, baseOff, search, ui.HexSkipZero, t)
 }
