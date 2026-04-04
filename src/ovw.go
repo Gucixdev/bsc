@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -35,11 +36,12 @@ func pct2(used, total int) int {
 }
 
 type ColLine struct {
-	Text string
-	C    Color
-	Dim  bool
-	Bold bool
-	Pre  bool // text already contains ANSI codes; skip attr prefix, use visualLen
+	Text  string
+	C     Color
+	Dim   bool
+	Bold  bool
+	Pre   bool   // text already contains ANSI codes; skip attr prefix, use visualLen
+	Title string // section name for box header (used when Bold=true in SEC/OPT)
 }
 
 func addLine(lines *[]ColLine, h int, text string, c Color, dim, bold bool) {
@@ -714,6 +716,89 @@ func filterProcs(procs []ProcStat, filter string) []ProcStat {
 	return out
 }
 
+// drawMemMapBar renders a compact 2-row memory map at 'row': colored bar + labels.
+// Reads /proc/meminfo directly.
+func drawMemMapBar(buf *strings.Builder, row, cols int, t *Theme) {
+	mi := map[string]int64{}
+	if raw, err := os.ReadFile("/proc/meminfo"); err == nil {
+		for _, line := range strings.Split(string(raw), "\n") {
+			p := strings.SplitN(line, ":", 2)
+			if len(p) != 2 {
+				continue
+			}
+			f := strings.Fields(p[1])
+			if len(f) == 0 {
+				continue
+			}
+			n, _ := strconv.ParseInt(f[0], 10, 64)
+			mi[strings.TrimSpace(p[0])] = n
+		}
+	}
+	totKB := mi["MemTotal"]
+	if totKB == 0 {
+		buf.WriteString(pos(row, 0) + CLEOL)
+		buf.WriteString(pos(row+1, 0) + CLEOL)
+		return
+	}
+	type seg struct {
+		lbl string
+		kb  int64
+		c   Color
+	}
+	segs := []seg{
+		{"kern", mi["KernelStack"] + mi["Slab"] + mi["PageTables"], t.WARN},
+		{"huge", mi["HugePages_Total"] * 2048, t.GPU},
+		{"anon", mi["Active(anon)"] + mi["Inactive(anon)"] + mi["Shmem"], t.RAM},
+		{"cach", mi["Buffers"] + mi["Cached"], t.DISK},
+		{"swap", mi["SwapTotal"] - mi["SwapFree"], t.ZRAM},
+		{"free", mi["MemFree"], t.NET},
+	}
+	mapW := max(1, cols)
+	widths := make([]int, len(segs))
+	for i, s := range segs {
+		n := int(s.kb * int64(mapW) / totKB)
+		if n < 0 {
+			n = 0
+		}
+		widths[i] = n
+	}
+
+	// bar row
+	buf.WriteString(pos(row, 0))
+	for i, s := range segs {
+		n := widths[i]
+		if n == 0 {
+			continue
+		}
+		pct := fmt.Sprintf("%d%%", int(100*s.kb/totKB))
+		if len(pct) > n {
+			pct = strings.Repeat(" ", n)
+		} else {
+			pad := n - len(pct)
+			pct = strings.Repeat(" ", pad/2) + pct + strings.Repeat(" ", pad-pad/2)
+		}
+		buf.WriteString(bgCol(s.c) + ansiCol(Color{0, 0, 0}) + pct + RESET)
+	}
+	buf.WriteString(CLEOL)
+
+	// label row
+	buf.WriteString(pos(row+1, 0))
+	for i, s := range segs {
+		n := widths[i]
+		if n == 0 {
+			continue
+		}
+		lbl := s.lbl
+		if len(lbl) > n {
+			lbl = lbl[:n]
+		} else {
+			lbl += strings.Repeat(" ", n-len(lbl))
+		}
+		buf.WriteString(DIM + ansiCol(s.c) + lbl + RESET)
+	}
+	buf.WriteString(CLEOL)
+}
+
 func drawOVW(buf *strings.Builder, rows, cols int,
 	cores []CoreStat, load [3]float64, raplW float64,
 	mem MemStat, gpu GPUStat, disks []DiskStat, nets []NetIface, gateway string,
@@ -810,6 +895,9 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 
 	renderCols(buf, 0, topH, colData, colWidths, t)
 
+	// compact memory map: 2 rows between top panels and proc list
+	drawMemMapBar(buf, topH, cols, t)
+
 	procs := filterProcs(allProcs, ui.Filter)
 	if ui.Sort == SORT_MEM {
 		sort.Slice(procs, func(i, j int) bool { return procs[i].MemKB > procs[j].MemKB })
@@ -859,14 +947,14 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 		hdrLine = string([]rune(hdrLine)[:cols])
 	}
 
-	buf.WriteString(pos(topH, 0))
+	buf.WriteString(pos(topH+2, 0))
 	buf.WriteString(ansiCol(t.HDR))
 	buf.WriteString(BOLD)
 	buf.WriteString(hdrLine)
 	buf.WriteString(RESET)
 	buf.WriteString(CLEOL)
 
-	listStart := topH + 2
+	listStart := topH + 4
 	avail := rows - listStart - 2 // hints=rows-2, statusbar=rows-1
 	if avail < 0 {
 		avail = 0

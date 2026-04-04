@@ -135,6 +135,43 @@ func allZero(b []byte) bool {
 	return true
 }
 
+// scanToNonZero fast-forwards data[off:] skipping zero bpr-rows using 4KB strides.
+// Returns (first non-zero row offset, number of zero rows skipped).
+func scanToNonZero(data []byte, off, bpr int) (int, int) {
+	const stride = 4096
+	zeroRows := 0
+	for off < len(data) {
+		end := off + stride
+		if end > len(data) {
+			end = len(data)
+		}
+		nz := false
+		for _, b := range data[off:end] {
+			if b != 0 {
+				nz = true
+				break
+			}
+		}
+		if !nz {
+			zeroRows += (end - off + bpr - 1) / bpr
+			off = end
+			continue
+		}
+		for off < end {
+			rowEnd := off + bpr
+			if rowEnd > len(data) {
+				rowEnd = len(data)
+			}
+			if !allZero(data[off:rowEnd]) {
+				return off, zeroRows
+			}
+			zeroRows++
+			off += bpr
+		}
+	}
+	return off, zeroRows
+}
+
 // clampStr — truncate string to n runes (rune-aware, handles multi-byte like ─)
 func clampStr(s string, n int) string {
 	runes := []rune(s)
@@ -204,7 +241,8 @@ func renderHexDump(buf *strings.Builder, startRow, endRow, dumpX, dumpW, bpr int
 	dim := DIM + ansiCol(t.USB)
 	row := startRow
 	zeroRun := 0
-	for off := 0; row < endRow; off += bpr {
+	off := 0
+	for row < endRow {
 		if off >= len(data) {
 			if zeroRun > 0 {
 				buf.WriteString(pos(row, dumpX))
@@ -212,20 +250,24 @@ func renderHexDump(buf *strings.Builder, startRow, endRow, dumpX, dumpW, bpr int
 				row++
 				zeroRun = 0
 			}
-			buf.WriteString(pos(row, dumpX) + CLEOL)
-			row++
-			continue
+			for ; row < endRow; row++ {
+				buf.WriteString(pos(row, dumpX) + CLEOL)
+			}
+			break
+		}
+		if skipZero {
+			newOff, zeros := scanToNonZero(data, off, bpr)
+			zeroRun += zeros
+			off = newOff
+			if off >= len(data) {
+				continue
+			}
 		}
 		end := off + bpr
 		if end > len(data) {
 			end = len(data)
 		}
 		chunk := data[off:end]
-
-		if skipZero && allZero(chunk) {
-			zeroRun++
-			continue
-		}
 		if zeroRun > 0 && row < endRow {
 			buf.WriteString(pos(row, dumpX))
 			buf.WriteString(dim + fmt.Sprintf("  ··· %d zero rows", zeroRun) + RESET + CLEOL)
@@ -235,22 +277,20 @@ func renderHexDump(buf *strings.Builder, startRow, endRow, dumpX, dumpW, bpr int
 		if row >= endRow {
 			break
 		}
-		var lineCol string
+		lineCol := ansiCol(t.DISK)
 		if allZero(chunk) {
 			lineCol = dim
-		} else {
-			lineCol = ansiCol(t.DISK)
 		}
 		line := hexLine(baseAddr, off, chunk, bpr, search, lineCol, t)
 		line = clampVisual(line, dumpW)
 		buf.WriteString(pos(row, dumpX))
 		buf.WriteString(lineCol + line + RESET + CLEOL)
 		row++
+		off += bpr
 	}
 	if zeroRun > 0 && row < endRow {
 		buf.WriteString(pos(row, dumpX))
 		buf.WriteString(dim + fmt.Sprintf("  ··· %d zero rows", zeroRun) + RESET + CLEOL)
-		row++
 	}
 }
 
@@ -387,6 +427,7 @@ func drawHEX(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		bpr = 8
 	}
 	bpr = (bpr / 8) * 8
+	ui.HexBPR = bpr
 
 	contentRows := rows - 2 // row 0=hdr, rows-1=statusbar
 	paneH := contentRows - 2 // -1 more for hint row (rows-2)
@@ -412,4 +453,109 @@ func drawHEX(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 
 	drawHexInfo(buf, rows, cols, ui, ss, t)
 	drawStatusBar(buf, rows, cols, ui, ui.Interval, ss, t)
+}
+
+// hexScrollSkipZero scrolls HexScroll by dir (+1/-1), jumping over zero-filled
+// rows when HexSkipZero is on. Only fast-scans in-memory sources (NET, VRAM);
+// file-backed sources (MEM, DISK) do a plain single-row step.
+func hexScrollSkipZero(ui *UI, ss *SysState, dir int) {
+	bpr := ui.HexBPR
+	if bpr <= 0 {
+		bpr = 16
+	}
+
+	if !ui.HexSkipZero {
+		if dir > 0 {
+			ui.HexScroll++
+		} else if ui.HexScroll > 0 {
+			ui.HexScroll--
+		}
+		return
+	}
+
+	var data []byte
+	switch ui.HexSource {
+	case HEX_NET:
+		ss.mu.RLock()
+		var ifaces []string
+		for _, n := range ss.Nets {
+			if n.Name != "lo" {
+				ifaces = append(ifaces, n.Name)
+			}
+		}
+		ss.mu.RUnlock()
+		if ui.HexSel < len(ifaces) {
+			ss.NetCapMu.Lock()
+			buf := ss.HexNetBufs[ifaces[ui.HexSel]]
+			cp := make([]byte, len(buf))
+			copy(cp, buf)
+			ss.NetCapMu.Unlock()
+			data = cp
+		}
+	case HEX_VRAM:
+		vm := openVRAMBar()
+		if vm.err == "" {
+			data = vm.data
+		}
+	}
+
+	if data == nil {
+		if dir > 0 {
+			ui.HexScroll++
+		} else if ui.HexScroll > 0 {
+			ui.HexScroll--
+		}
+		return
+	}
+
+	off := ui.HexScroll * bpr
+	if dir > 0 {
+		off += bpr
+		if off >= len(data) {
+			return
+		}
+		newOff, _ := scanToNonZero(data, off, bpr)
+		ui.HexScroll = newOff / bpr
+	} else {
+		if off == 0 {
+			return
+		}
+		off -= bpr
+		// scan backward in 4KB strides to find last non-zero block boundary
+		stride := 4096
+		for off >= stride {
+			block := data[off-stride : off]
+			allZero := true
+			for _, b := range block {
+				if b != 0 {
+					allZero = false
+					break
+				}
+			}
+			if !allZero {
+				break
+			}
+			off -= stride
+		}
+		// row-level scan within remaining block
+		for off > 0 {
+			rowEnd := off
+			rowStart := rowEnd - bpr
+			if rowStart < 0 {
+				rowStart = 0
+			}
+			allZero := true
+			for _, b := range data[rowStart:rowEnd] {
+				if b != 0 {
+					allZero = false
+					break
+				}
+			}
+			if !allZero {
+				break
+			}
+			off = rowStart
+		}
+		ui.HexScroll = off / bpr
+	}
 }

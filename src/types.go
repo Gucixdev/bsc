@@ -5,6 +5,25 @@ import (
 	"time"
 )
 
+type uiSnapT struct {
+	Tab, Sel, Scroll, DevPage, DevScroll, SecScroll, OptScroll int
+	HexSource, HexScroll, HexSel, HexRegion, AsmScroll, AsmPID int
+	Filter, Sort, Search, HexSearch, AsmSearch               string
+	Frozen, HexSkipZero, SearchMode, HexSearchMode, AsmSearchMode bool
+}
+
+func uiSnap(u *UI) uiSnapT {
+	return uiSnapT{
+		Tab: u.Tab, Sel: u.Sel, Scroll: u.Scroll,
+		DevPage: u.DevPage, DevScroll: u.DevScroll, SecScroll: u.SecScroll, OptScroll: u.OptScroll,
+		HexSource: u.HexSource, HexScroll: u.HexScroll, HexSel: u.HexSel, HexRegion: u.HexRegion,
+		AsmScroll: u.AsmScroll, AsmPID: u.AsmPID,
+		Filter: u.Filter, Sort: u.Sort, Search: u.Search, HexSearch: u.HexSearch, AsmSearch: u.AsmSearch,
+		Frozen: u.Frozen, HexSkipZero: u.HexSkipZero,
+		SearchMode: u.SearchMode, HexSearchMode: u.HexSearchMode, AsmSearchMode: u.AsmSearchMode,
+	}
+}
+
 type CoreStat struct {
 	Pct      float64
 	FreqMHz  int
@@ -232,5 +251,8 @@ type UI struct {
 	SelArrive      int
 	AsmPID         int
 	AsmScroll      int
+	AsmSearch      string
+	AsmSearchMode  bool
 	HexSkipZero    bool
+	HexBPR         int // bytes per row, set each render
 }

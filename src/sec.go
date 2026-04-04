@@ -1480,9 +1480,7 @@ func countOpenFiles() int {
 	return n
 }
 
-func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Theme) {
-	buf.WriteString(pos(0, 0))
-	buf.WriteString(ansiCol(t.HDR) + BOLD + clampStr(" DEV · SEC "+strings.Repeat("─", max(0, cols-11)), cols) + RESET + CLEOL)
+func buildSecLines(ss *SysState, ui *UI, t *Theme) []ColLine {
 
 	ss.mu.RLock()
 	vms := ss.VMs
@@ -1502,7 +1500,7 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		return ColLine{Text: text, Pre: true}
 	}
 	hdr := func(name string) ColLine {
-		return ColLine{Text: " " + BOLD + ansiCol(t.HDR) + name, Pre: true, Bold: true}
+		return ColLine{Text: " " + BOLD + ansiCol(t.HDR) + name, Pre: true, Bold: true, Title: name}
 	}
 
 	var lines []ColLine
@@ -2039,97 +2037,118 @@ func drawSEC(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		}
 	}
 
-	// dynamic column count
-	nCols := 1
-	if cols >= 140 { nCols = 3 } else if cols >= 80 { nCols = 2 }
+	return lines
+}
 
-	// collect section spans (each section starts with a Bold=true hdr line)
-	type span struct{ s, e int }
-	var sections []span
-	secStart := 0
-	for i, l := range lines {
-		if i > 0 && l.Bold {
-			sections = append(sections, span{secStart, i})
-			secStart = i
-		}
+// buildBoxedRows converts ColLine sections (Bold=true marks section start) into
+// pre-rendered strings with purple box borders. colW = visible column width.
+func buildBoxedRows(lines []ColLine, colW int, t *Theme) []string {
+	border := ansiCol(t.HDR)
+	innerW := colW - 2
+
+	// split into sections at Bold boundary
+	type section struct {
+		title string
+		lines []ColLine
 	}
-	sections = append(sections, span{secStart, len(lines)})
-
-	// greedy balanced distribution of sections into columns
-	// target: equal line count per column; never split a section
-	totalLines := len(lines)
-	targetH := (totalLines + nCols - 1) / nCols
-	colData := make([][]ColLine, nCols)
-	ci := 0
-	curH := 0
-	for _, sp := range sections {
-		h := sp.e - sp.s
-		if ci < nCols-1 && curH > 0 && curH+h > targetH {
-			ci++
-			curH = 0
-		}
-		colData[ci] = append(colData[ci], lines[sp.s:sp.e]...)
-		curH += h
-	}
-
-	// tight column widths: max visual content width per column
-	widths := make([]int, nCols)
-	for i, col := range colData {
-		w := 10
-		for _, l := range col {
-			if vl := visualLen(l.Text); vl > w {
-				w = vl
+	var sections []section
+	var cur *section
+	for _, l := range lines {
+		if l.Bold {
+			if cur != nil {
+				sections = append(sections, *cur)
 			}
+			cur = &section{title: l.Title}
+		} else if cur != nil {
+			cur.lines = append(cur.lines, l)
 		}
-		widths[i] = w + 1 // +1 breathing room
 	}
-	// last column fills remaining space
-	used := 0
-	for i := 0; i < nCols-1; i++ { used += widths[i] }
-	if rem := cols - used; rem > widths[nCols-1] {
-		widths[nCols-1] = rem
-	}
-	// safety: if tight widths exceed terminal, fall back to even split
-	total := 0
-	for _, w := range widths { total += w }
-	if total > cols {
-		even := cols / nCols
-		for i := range widths { widths[i] = even }
-		widths[nCols-1] = cols - even*(nCols-1)
+	if cur != nil {
+		sections = append(sections, *cur)
 	}
 
-	// render — no dividers
-	displayRows := rows - 2
-	maxColH := 0
-	for _, col := range colData {
-		if len(col) > maxColH { maxColH = len(col) }
-	}
-	maxScroll := max(0, maxColH-displayRows)
-	if ui.SecScroll > maxScroll { ui.SecScroll = maxScroll }
-
-	for row := 0; row < displayRows; row++ {
-		buf.WriteString(pos(row, 0))
-		for ci, col := range colData {
-			w := widths[ci]
-			idx := ui.SecScroll + row
-			if idx < len(col) {
-				l := col[idx]
-				if l.Pre {
-					clamped := clampVisual(l.Text, w)
-					pad := strings.Repeat(" ", max(0, w-visualLen(clamped)))
-					buf.WriteString(clamped + pad + RESET)
-				} else {
-					runes := []rune(l.Text)
-					if len(runes) > w { runes = runes[:w] }
-					text := string(runes) + strings.Repeat(" ", max(0, w-len(runes)))
-					attr := ansiCol(l.C)
-					if l.Bold { attr = BOLD + attr }
-					if l.Dim  { attr = DIM  + attr }
-					buf.WriteString(attr + text + RESET)
-				}
+	var rows []string
+	for _, sec := range sections {
+		// top border with title
+		dashLen := max(0, innerW-len(sec.title)-4)
+		if sec.title != "" {
+			rows = append(rows, border+"╭─ "+sec.title+" "+strings.Repeat("─", dashLen)+"╮"+RESET)
+		} else {
+			rows = append(rows, border+"╭"+strings.Repeat("─", innerW)+"╮"+RESET)
+		}
+		// content lines
+		for _, cl := range sec.lines {
+			var text string
+			if cl.Pre {
+				text = clampVisual(cl.Text, innerW)
 			} else {
-				buf.WriteString(strings.Repeat(" ", w))
+				attr := ansiCol(cl.C)
+				if cl.Bold {
+					attr = BOLD + attr
+				}
+				if cl.Dim {
+					attr = DIM + attr
+				}
+				runes := []rune(cl.Text)
+				if len(runes) > innerW {
+					runes = runes[:innerW]
+				}
+				text = attr + string(runes) + RESET
 			}
+			vl := visualLen(text)
+			pad := max(0, innerW-vl)
+			rows = append(rows, border+"│"+RESET+text+strings.Repeat(" ", pad)+border+"│"+RESET)
+		}
+		// bottom border + gap
+		rows = append(rows, border+"╰"+strings.Repeat("─", innerW)+"╯"+RESET)
+		rows = append(rows, "")
+	}
+	return rows
+}
+
+func drawSECOPT(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Theme) {
+	buf.WriteString(pos(0, 0))
+	buf.WriteString(ansiCol(t.HDR) + BOLD + clampStr(" DEV · SEC+OPT "+strings.Repeat("─", max(0, cols-15)), cols) + RESET + CLEOL)
+
+	halfW := cols / 2
+	divX := halfW
+
+	// divider
+	for r := 1; r < rows-1; r++ {
+		buf.WriteString(pos(r, divX))
+		buf.WriteString(ansiCol(t.HDR) + "│" + RESET)
+	}
+
+	secLines := buildSecLines(ss, ui, t)
+	optLines, _ := bgOPT.get(collectOPT)
+
+	secRows := buildBoxedRows(secLines, halfW, t)
+	optRows := buildBoxedRows(optLines, cols-halfW-1, t)
+
+	displayRows := rows - 2
+	maxH := max(len(secRows), len(optRows))
+	maxScroll := max(0, maxH-displayRows)
+	if ui.SecScroll > maxScroll {
+		ui.SecScroll = maxScroll
+	}
+
+	for r := 0; r < displayRows; r++ {
+		si := ui.SecScroll + r
+
+		// left (SEC)
+		buf.WriteString(pos(r+1, 0))
+		if si < len(secRows) {
+			vl := visualLen(secRows[si])
+			pad := max(0, halfW-vl)
+			buf.WriteString(secRows[si] + strings.Repeat(" ", pad))
+		} else {
+			buf.WriteString(strings.Repeat(" ", halfW))
+		}
+
+		// right (OPT) — start after divider
+		buf.WriteString(pos(r+1, divX+1))
+		if si < len(optRows) {
+			buf.WriteString(optRows[si])
 		}
 		buf.WriteString(CLEOL)
 	}

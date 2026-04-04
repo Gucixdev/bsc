@@ -196,6 +196,11 @@ func drawASM(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 		ss.mu.RUnlock()
 	}
 	hdr := fmt.Sprintf(" ASM  pid:%s", pidStr)
+	if ui.AsmSearchMode {
+		hdr += fmt.Sprintf("  /%s_", ui.AsmSearch)
+	} else if ui.AsmSearch != "" {
+		hdr += fmt.Sprintf("  /%s", ui.AsmSearch)
+	}
 	hdr = clampStr(hdr+strings.Repeat("─", max(0, cols-len(hdr))), cols)
 	buf.WriteString(pos(0, 0))
 	buf.WriteString(ansiCol(t.HDR) + BOLD + hdr + RESET + CLEOL)

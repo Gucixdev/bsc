@@ -252,9 +252,45 @@ func drawHexVRAM(buf *strings.Builder, rows, cols, paneW, sepX, dumpX, dumpW, bp
 		scroll = totalBytes
 	}
 
+	// For file fallback: preload up to 4MB from scroll to avoid per-row ReadAt syscalls.
+	var preload []byte
+	const preloadSz = 4 * 1024 * 1024
+	if vm.file != nil {
+		sz := int64(preloadSz)
+		if scroll+sz > totalBytes {
+			sz = totalBytes - scroll
+		}
+		if sz > 0 {
+			preload = make([]byte, sz)
+			vm.file.ReadAt(preload, scroll)
+		}
+	}
+
+	// readChunk fills dst from off (absolute), using mmap or preload buffer.
+	chunk := make([]byte, bpr)
+	readChunk := func(off, end int64) []byte {
+		n := int(end - off)
+		c := chunk[:n]
+		if vm.data != nil {
+			func() {
+				defer func() { recover() }()
+				copy(c, vm.data[off:end])
+			}()
+		} else if preload != nil {
+			rel := off - scroll
+			if rel >= 0 && int(rel)+n <= len(preload) {
+				copy(c, preload[rel:int(rel)+n])
+			}
+		} else if vm.file != nil {
+			vm.file.ReadAt(c, off)
+		}
+		return c
+	}
+
 	zeroRun := 0
 	r := 0
-	for byteOff := int64(0); r < paneH; byteOff += int64(bpr) {
+	byteOff := int64(0)
+	for r < paneH {
 		off := scroll + byteOff
 		if off >= totalBytes {
 			if zeroRun > 0 {
@@ -263,33 +299,46 @@ func drawHexVRAM(buf *strings.Builder, rows, cols, paneW, sepX, dumpX, dumpW, bp
 				r++
 				zeroRun = 0
 			}
-			buf.WriteString(pos(r+1, dumpX) + CLEOL)
-			r++
-			continue
+			for ; r < paneH; r++ {
+				buf.WriteString(pos(r+1, dumpX) + CLEOL)
+			}
+			break
 		}
+
+		// Fast zero scan using mmap or preload buffer.
+		if ui.HexSkipZero {
+			var scanData []byte
+			var scanBase int64
+			if vm.data != nil {
+				scanData = vm.data
+				scanBase = 0
+			} else if preload != nil {
+				scanData = preload
+				scanBase = scroll
+			}
+			if scanData != nil {
+				relOff := int(off - scanBase)
+				if relOff >= 0 && relOff < len(scanData) {
+					newRel, zeros := scanToNonZero(scanData, relOff, bpr)
+					zeroRun += zeros
+					byteOff += int64(newRel-relOff)
+					off = scanBase + int64(newRel)
+					if off >= totalBytes {
+						continue
+					}
+				}
+			}
+		}
+
 		end := off + int64(bpr)
 		if end > totalBytes {
 			end = totalBytes
 		}
-		chunk := make([]byte, bpr)
-		if vm.data != nil {
-			func() {
-				defer func() { recover() }()
-				copy(chunk, vm.data[off:end])
-			}()
-		} else if vm.file != nil {
-			vm.file.ReadAt(chunk, off)
-		}
-
-		isZero := true
-		for _, b := range chunk[:end-off] {
-			if b != 0 {
-				isZero = false
-				break
-			}
-		}
+		c := readChunk(off, end)
+		isZero := allZero(c)
 		if ui.HexSkipZero && isZero {
 			zeroRun++
+			byteOff += int64(bpr)
 			continue
 		}
 		if zeroRun > 0 && r < paneH {
@@ -305,10 +354,11 @@ func drawHexVRAM(buf *strings.Builder, rows, cols, paneW, sepX, dumpX, dumpW, bp
 		if isZero {
 			lineCol = dim
 		}
-		line := hexLine(off, 0, chunk[:end-off], bpr, search, lineCol, t)
+		line := hexLine(off, 0, c, bpr, search, lineCol, t)
 		buf.WriteString(pos(r+1, dumpX))
 		buf.WriteString(lineCol + line + RESET + CLEOL)
 		r++
+		byteOff += int64(bpr)
 	}
 	if zeroRun > 0 && r < paneH {
 		buf.WriteString(pos(r+1, dumpX))

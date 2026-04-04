@@ -6,6 +6,38 @@ import (
 	"time"
 )
 
+// kb renders a keyboard key as a visual "button" inside the reversed status bar.
+// RESET within REV context creates a normal-video island — looks like a raised key.
+func kb(sym string) string {
+	return RESET + BOLD + " " + sym + " " + REV
+}
+
+// visLen counts visible columns in s, skipping ANSI escape sequences.
+func visLen(s string) int {
+	n, i := 0, 0
+	for i < len(s) {
+		if s[i] == '\033' {
+			j := i + 1
+			if j < len(s) && s[j] == '[' {
+				j++
+				for j < len(s) && !((s[j] >= 'A' && s[j] <= 'Z') || (s[j] >= 'a' && s[j] <= 'z')) {
+					j++
+				}
+				if j < len(s) {
+					j++
+				}
+			}
+			i = j
+			continue
+		}
+		if s[i]&0xC0 != 0x80 { // rune-start byte only
+			n++
+		}
+		i++
+	}
+	return n
+}
+
 func fmtUptime(secs int64) string {
 	d := secs / 86400
 	secs %= 86400
@@ -14,7 +46,7 @@ func fmtUptime(secs int64) string {
 	m := secs / 60
 	s := secs % 60
 	if d > 0 {
-		return fmt.Sprintf("%dd %02d:%02d:%02d", d, h, m, s)
+		return fmt.Sprintf("%dd%02d:%02d:%02d", d, h, m, s)
 	}
 	return fmt.Sprintf("%02d:%02d:%02d", h, m, s)
 }
@@ -23,39 +55,60 @@ func drawStatusBar(buf *strings.Builder, rows, cols int, ui *UI, interval time.D
 	var left string
 	switch ui.Tab {
 	case TAB_OVW:
-		left = "OVW  ↑↓ ←→filter  c/m=sort  f=frz  k=kill  spc=mark  y=pid"
+		left = "OVW " +
+			kb("↑") + kb("↓") + " nav " +
+			kb("←") + kb("→") + " filter " +
+			kb("c") + kb("m") + " sort " +
+			kb("f") + " freeze " +
+			kb("k") + " kill " +
+			kb("␣") + " mark " +
+			kb("y") + " pid"
 		if ui.Frozen {
-			left += "  [FRZ]"
+			left += " [FRZ]"
 		}
 	case TAB_DEV:
-		pages := [3]string{"MAIN", "SEC", "OPT"}
-		left = fmt.Sprintf("DEV[%s]  ↑↓  Alt=page", pages[ui.DevPage])
+		pages := [2]string{"MAIN", "SEC+OPT"}
+		left = "DEV·" + pages[ui.DevPage] + " " +
+			kb("↑") + kb("↓") + " scroll " +
+			kb("Esc") + " subpage " +
+			kb("⇥") + " tab"
 		if ui.DevPage == DEV_MAIN {
-			left += "  ←→=threads"
+			left += " " + kb("←") + kb("→") + " threads"
 		}
 	case TAB_HEX:
 		srcName := [4]string{"MEM", "DISK", "NET", "VRAM"}[ui.HexSource]
-		skipMark := ""
+		left = "HEX·" + srcName + " " +
+			kb("↑") + kb("↓") + " scroll " +
+			kb("Esc") + " src " +
+			kb("⇥") + " tab " +
+			kb("←") + kb("→") + " sel " +
+			kb("/") + " search " +
+			kb("z") + " 0skip"
 		if ui.HexSkipZero {
-			skipMark = "  [0skip]"
+			left += "●"
 		}
-		left = fmt.Sprintf("HEX[%s]  ↑↓  Alt=src  ←→=sel  /=search  z=0skip%s", srcName, skipMark)
 		if ui.HexSource == HEX_NET && ui.NetLock {
-			left += "  [LOCK]"
+			left += " " + kb("l") + "LOCK"
 		}
 	case TAB_ASM:
-		left = "ASM  ↑↓  ←→=pid  n/N=fn  p=sel  g=top  Alt=src"
+		left = "ASM " +
+			kb("↑") + kb("↓") + " scroll " +
+			kb("←") + kb("→") + " pid " +
+			kb("n") + kb("N") + " fn " +
+			kb("/") + " search " +
+			kb("g") + " top " +
+			kb("Esc") + " src"
 	}
 
 	flags := ""
 	if ui.Recording {
-		flags += " REC"
+		flags += " ⏺REC"
 	}
 	if ui.Anon {
 		flags += " ANON"
 	}
 	if flags != "" {
-		left += " [" + flags[1:] + "]"
+		left += " [" + strings.TrimPrefix(flags, " ") + "]"
 	}
 
 	ss.mu.RLock()
@@ -65,13 +118,16 @@ func drawStatusBar(buf *strings.Builder, rows, cols int, ui *UI, interval time.D
 
 	batS := ""
 	if batt.Pct > 0 || batt.Charging {
-		arrow := "="
+		icon := "↓"
 		if batt.Charging {
-			arrow = "↑"
-		} else if !batt.Full {
-			arrow = "↓"
+			icon = "↑"
+		} else if batt.Full {
+			icon = "="
 		}
-		batS = fmt.Sprintf(" %d%%%s", batt.Pct, arrow)
+		batS = fmt.Sprintf(" %d%%%s", batt.Pct, icon)
+		if !batt.Charging && !batt.Full && batt.Watts > 0.1 {
+			batS += fmt.Sprintf(" %.1fW", batt.Watts)
+		}
 	}
 
 	spin := ""
@@ -79,7 +135,7 @@ func drawStatusBar(buf *strings.Builder, rows, cols int, ui *UI, interval time.D
 		spin = spinChar() + " "
 	}
 
-	right := fmt.Sprintf("%sup%s%s %s %dms",
+	right := fmt.Sprintf("%s%s%s %s %dms",
 		spin,
 		fmtUptime(uptime),
 		batS,
@@ -87,22 +143,30 @@ func drawStatusBar(buf *strings.Builder, rows, cols int, ui *UI, interval time.D
 		interval.Milliseconds(),
 	)
 
-	// use rune count to handle Unicode arrows correctly
-	leftW := len([]rune(left))
-	rightW := len([]rune(right))
-	gap := cols - leftW - rightW - 2
+	lw := visLen(left)
+	rw := visLen(right)
+	gap := cols - lw - rw - 2
 	if gap < 1 {
 		gap = 1
 	}
 
-	bar := " " + left + strings.Repeat(" ", gap) + right + " "
-	runes := []rune(bar)
-	if len(runes) > cols {
-		bar = string(runes[:cols])
-	} else if len(runes) < cols {
-		bar = bar + strings.Repeat(" ", cols-len(runes))
+	// Build bar: REV context, with key buttons as RESET islands
+	var b strings.Builder
+	b.WriteString(REV)
+	b.WriteByte(' ')
+	b.WriteString(left)
+	b.WriteString(strings.Repeat(" ", gap))
+	b.WriteString(right)
+	b.WriteByte(' ')
+	b.WriteString(RESET)
+	bar := b.String()
+
+	plainLen := lw + rw + gap + 2
+	if plainLen < cols {
+		// insert extra padding before RESET at end
+		bar = bar[:len(bar)-len(RESET)] + strings.Repeat(" ", cols-plainLen) + RESET
 	}
 
 	buf.WriteString(pos(rows-1, 0))
-	buf.WriteString(REV + bar + RESET)
+	buf.WriteString(bar)
 }

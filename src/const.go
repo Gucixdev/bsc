@@ -12,9 +12,8 @@ const (
 	TAB_HEX = 2
 	TAB_ASM = 3
 
-	DEV_MAIN = 0
-	DEV_SEC  = 1
-	DEV_OPT  = 2
+	DEV_MAIN   = 0
+	DEV_SECOPT = 1
 
 	SORT_CPU = "cpu"
 	SORT_MEM = "mem"
