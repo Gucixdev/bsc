@@ -252,10 +252,19 @@ func drawHexVRAM(buf *strings.Builder, rows, cols, paneW, sepX, dumpX, dumpW, bp
 		scroll = totalBytes
 	}
 
-	for r := 0; r < paneH; r++ {
-		off := scroll + int64(r*bpr)
+	zeroRun := 0
+	r := 0
+	for byteOff := int64(0); r < paneH; byteOff += int64(bpr) {
+		off := scroll + byteOff
 		if off >= totalBytes {
+			if zeroRun > 0 {
+				buf.WriteString(pos(r+1, dumpX))
+				buf.WriteString(dim + fmt.Sprintf("  ··· %d zero rows", zeroRun) + RESET + CLEOL)
+				r++
+				zeroRun = 0
+			}
 			buf.WriteString(pos(r+1, dumpX) + CLEOL)
+			r++
 			continue
 		}
 		end := off + int64(bpr)
@@ -264,29 +273,45 @@ func drawHexVRAM(buf *strings.Builder, rows, cols, paneW, sepX, dumpX, dumpW, bp
 		}
 		chunk := make([]byte, bpr)
 		if vm.data != nil {
-			// mmap path — safe copy with bus error recovery
 			func() {
 				defer func() { recover() }()
 				copy(chunk, vm.data[off:end])
 			}()
 		} else if vm.file != nil {
-			// file read path
 			vm.file.ReadAt(chunk, off)
 		}
 
-		allZero := true
+		isZero := true
 		for _, b := range chunk[:end-off] {
 			if b != 0 {
-				allZero = false
+				isZero = false
 				break
 			}
 		}
+		if ui.HexSkipZero && isZero {
+			zeroRun++
+			continue
+		}
+		if zeroRun > 0 && r < paneH {
+			buf.WriteString(pos(r+1, dumpX))
+			buf.WriteString(dim + fmt.Sprintf("  ··· %d zero rows", zeroRun) + RESET + CLEOL)
+			r++
+			zeroRun = 0
+		}
+		if r >= paneH {
+			break
+		}
 		lineCol := ansiCol(t.GPU)
-		if allZero {
+		if isZero {
 			lineCol = dim
 		}
 		line := hexLine(off, 0, chunk[:end-off], bpr, search, lineCol, t)
 		buf.WriteString(pos(r+1, dumpX))
 		buf.WriteString(lineCol + line + RESET + CLEOL)
+		r++
+	}
+	if zeroRun > 0 && r < paneH {
+		buf.WriteString(pos(r+1, dumpX))
+		buf.WriteString(dim + fmt.Sprintf("  ··· %d zero rows", zeroRun) + RESET + CLEOL)
 	}
 }

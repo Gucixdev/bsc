@@ -232,4 +232,5 @@ type UI struct {
 	SelArrive      int
 	AsmPID         int
 	AsmScroll      int
+	HexSkipZero    bool
 }

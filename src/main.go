@@ -385,13 +385,9 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 			ui.Sel = 0
 			ui.Scroll = 0
 		}
-	case 'w':
+	case 'z':
 		if ui.Tab == TAB_HEX {
-			ui.HexSource = (ui.HexSource + 1) % 4
-			ui.HexScroll = 0
-			ui.HexRegScroll = 0
-		} else if ui.Tab == TAB_DEV {
-			ui.DevPage = (ui.DevPage + 1) % 3
+			ui.HexSkipZero = !ui.HexSkipZero
 		}
 	case 'm':
 		if ui.Tab == TAB_OVW {
@@ -614,9 +610,20 @@ func readEscSeq(inputCh <-chan byte, ui *UI) []byte {
 			}
 		case <-time.After(50 * time.Millisecond):
 			if len(seq) == 0 {
-				// bare ESC
-				if ui.Tab == TAB_OVW && ui.Detail {
-					ui.Detail = false
+				// bare Alt/ESC — cycle sub-pages/sources per tab
+				switch ui.Tab {
+				case TAB_OVW:
+					if ui.Detail {
+						ui.Detail = false
+					}
+				case TAB_DEV:
+					ui.DevPage = (ui.DevPage + 1) % 3
+				case TAB_HEX:
+					ui.HexSource = (ui.HexSource + 1) % 4
+					ui.HexScroll = 0
+					ui.HexRegScroll = 0
+				case TAB_ASM:
+					ui.AsmPID = 0 // force re-select next valid PID
 				}
 			}
 			return seq

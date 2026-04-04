@@ -108,5 +108,5 @@ func drawHexNET(buf *strings.Builder, rows, cols, paneW, sepX, dumpX, dumpW, bpr
 		data = capData[off:end]
 	}
 
-	renderHexDump(buf, 2, rows-2, dumpX, dumpW, bpr, data, off, search, t)
+	renderHexDump(buf, 2, rows-2, dumpX, dumpW, bpr, data, off, search, ui.HexSkipZero, t)
 }
