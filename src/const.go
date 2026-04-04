@@ -12,8 +12,7 @@ const (
 	TAB_HEX = 2
 	TAB_ASM = 3
 
-	DEV_MAIN   = 0
-	DEV_SECOPT = 1
+	DEV_MAIN = 0 // only page; DevPage kept for scroll snap compat
 
 	SORT_CPU = "cpu"
 	SORT_MEM = "mem"

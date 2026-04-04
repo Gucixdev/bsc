@@ -269,12 +269,7 @@ func render(ss *SysState, ui *UI, t *Theme) {
 	case TAB_OVW:
 		drawOVW(&buf, rows, cols, cores, load, raplW, mem, gpu, disks, nets, gateway, audio, usb, vms, procs, cnts, histCPU, histGPU, histVRAM, histNetRx, histNetTx, histDiskR, histDiskW, histVMsRun, histQEMURun, histVBoxRun, histVMwRun, histDockRun, histPodRun, histCores, ui, t, ss)
 	case TAB_DEV:
-		switch ui.DevPage {
-		case DEV_MAIN:
-			drawDEV(&buf, rows, cols, ss, ui, t)
-		case DEV_SECOPT:
-			drawSECOPT(&buf, rows, cols, ss, ui, t)
-		}
+		drawDEV(&buf, rows, cols, ss, ui, t)
 	case TAB_HEX:
 		drawHEX(&buf, rows, cols, ss, ui, t)
 	case TAB_ASM:
@@ -553,24 +548,14 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 		case TAB_OVW:
 			if ui.NetScroll > 0 { ui.NetScroll-- }
 		case TAB_DEV:
-			switch ui.DevPage {
-			case DEV_MAIN:
-				if ui.DevScroll > 0 { ui.DevScroll-- }
-			case DEV_SECOPT:
-				if ui.SecScroll > 0 { ui.SecScroll-- }
-			}
+			if ui.SecScroll > 0 { ui.SecScroll-- }
 		}
 	case 'o':
 		switch ui.Tab {
 		case TAB_OVW:
 			ui.NetScroll++
 		case TAB_DEV:
-			switch ui.DevPage {
-			case DEV_MAIN:
-				ui.DevScroll++
-			case DEV_SECOPT:
-				ui.SecScroll++
-			}
+			ui.SecScroll++
 		}
 	case 'y':
 		if ui.Tab == TAB_OVW && ui.SelPID != 0 {
@@ -652,7 +637,7 @@ func cycleAltAction(ui *UI) {
 			ui.Detail = false
 		}
 	case TAB_DEV:
-		ui.DevPage = (ui.DevPage + 1) % 2
+		ui.SecScroll = 0
 	case TAB_HEX:
 		ui.HexSource = (ui.HexSource + 1) % 4
 		ui.HexScroll = 0
@@ -683,12 +668,7 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 		case TAB_HEX:
 			hexScrollSkipZero(ui, ss, -1)
 		case TAB_DEV:
-			switch ui.DevPage {
-			case DEV_MAIN:
-				if ui.DevScroll > 0 { ui.DevScroll-- }
-			case DEV_SECOPT:
-				if ui.SecScroll > 0 { ui.SecScroll-- }
-			}
+			if ui.SecScroll > 0 { ui.SecScroll-- }
 		case TAB_ASM:
 			if ui.AsmScroll > 0 { ui.AsmScroll-- }
 		}
@@ -699,12 +679,7 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 		case TAB_HEX:
 			hexScrollSkipZero(ui, ss, +1)
 		case TAB_DEV:
-			switch ui.DevPage {
-			case DEV_MAIN:
-				ui.DevScroll++
-			case DEV_SECOPT:
-				ui.SecScroll++
-			}
+			ui.SecScroll++
 		case TAB_ASM:
 			ui.AsmScroll++
 		}
@@ -715,12 +690,7 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 		case TAB_HEX:
 			if ui.HexScroll > 5 { ui.HexScroll -= 5 } else { ui.HexScroll = 0 }
 		case TAB_DEV:
-			switch ui.DevPage {
-			case DEV_MAIN:
-				if ui.DevScroll > 5 { ui.DevScroll -= 5 } else { ui.DevScroll = 0 }
-			case DEV_SECOPT:
-				if ui.SecScroll > 5 { ui.SecScroll -= 5 } else { ui.SecScroll = 0 }
-			}
+			if ui.SecScroll > 5 { ui.SecScroll -= 5 } else { ui.SecScroll = 0 }
 		case TAB_ASM:
 			if ui.AsmScroll > 5 { ui.AsmScroll -= 5 } else { ui.AsmScroll = 0 }
 		}
@@ -731,10 +701,7 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 		case TAB_HEX:
 			ui.HexScroll += 5
 		case TAB_DEV:
-			switch ui.DevPage {
-			case DEV_MAIN: ui.DevScroll += 5
-			case DEV_SECOPT: ui.SecScroll += 5
-			}
+			ui.SecScroll += 5
 		case TAB_ASM:
 			ui.AsmScroll += 5
 		}
@@ -788,12 +755,7 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 		case TAB_HEX:
 			if ui.HexScroll > 10 { ui.HexScroll -= 10 } else { ui.HexScroll = 0 }
 		case TAB_DEV:
-			switch ui.DevPage {
-			case DEV_MAIN:
-				if ui.DevScroll > 10 { ui.DevScroll -= 10 } else { ui.DevScroll = 0 }
-			case DEV_SECOPT:
-				if ui.SecScroll > 10 { ui.SecScroll -= 10 } else { ui.SecScroll = 0 }
-			}
+			if ui.SecScroll > 10 { ui.SecScroll -= 10 } else { ui.SecScroll = 0 }
 		case TAB_ASM:
 			if ui.AsmScroll > 10 { ui.AsmScroll -= 10 } else { ui.AsmScroll = 0 }
 		}
@@ -804,10 +766,7 @@ func handleEscSeq(seq []byte, inputCh <-chan byte, ui *UI, ss *SysState) {
 		case TAB_HEX:
 			ui.HexScroll += 10
 		case TAB_DEV:
-			switch ui.DevPage {
-			case DEV_MAIN: ui.DevScroll += 10
-			case DEV_SECOPT: ui.SecScroll += 10
-			}
+			ui.SecScroll += 10
 		case TAB_ASM:
 			ui.AsmScroll += 10
 		}

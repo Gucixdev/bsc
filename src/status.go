@@ -67,14 +67,10 @@ func drawStatusBar(buf *strings.Builder, rows, cols int, ui *UI, interval time.D
 			left += " [FRZ]"
 		}
 	case TAB_DEV:
-		pages := [2]string{"MAIN", "SEC+OPT"}
-		left = "DEV·" + pages[ui.DevPage] + " " +
+		left = "DEV " +
 			kb("↑") + kb("↓") + " scroll " +
-			kb("Esc") + " subpage " +
+			kb("Esc") + " top " +
 			kb("⇥") + " tab"
-		if ui.DevPage == DEV_MAIN {
-			left += " " + kb("←") + kb("→") + " threads"
-		}
 	case TAB_HEX:
 		srcName := [4]string{"MEM", "DISK", "NET", "VRAM"}[ui.HexSource]
 		left = "HEX·" + srcName + " " +
