@@ -5,7 +5,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 )
 
 func readCtxSwTotal() int64 {
@@ -27,436 +26,134 @@ func readCtxSwTotal() int64 {
 	return total
 }
 
-var devPrev struct {
-	nrSwitches int64
-	pgFault    int64
-	swapIn     int64
-	swapOut    int64
-}
+// buildBoxedRows converts a flat ColLine list (Bold+Title = section boundary)
+// into pre-rendered rows with purple box borders.
+// Each section: ╭─ title ──╮ / │ content │ / ╰──────────╯ / blank gap.
+// Every returned string has exactly colW visible characters.
+func buildBoxedRows(lines []ColLine, colW int, t *Theme) []string {
+	if colW < 6 {
+		colW = 6
+	}
+	innerW := colW - 2 // space between │ borders
 
-type devGlobal struct {
-	mi         map[string]int64
-	nrSwitches int64
-	pgFault    int64
-	swapIn     int64
-	swapOut    int64
-}
+	type section struct {
+		title string
+		body  []ColLine
+	}
+	var secs []section
+	var cur *section
+	for _, l := range lines {
+		if l.Bold {
+			if cur != nil {
+				secs = append(secs, *cur)
+			}
+			cur = &section{title: l.Title}
+		} else if cur != nil {
+			cur.body = append(cur.body, l)
+		}
+	}
+	if cur != nil {
+		secs = append(secs, *cur)
+	}
 
-func readDevG() devGlobal {
-	d := devGlobal{mi: map[string]int64{}}
-	if raw, err := os.ReadFile("/proc/meminfo"); err == nil {
-		for _, line := range strings.Split(string(raw), "\n") {
-			p := strings.SplitN(line, ":", 2)
-			if len(p) != 2 {
-				continue
-			}
-			f := strings.Fields(p[1])
-			if len(f) == 0 {
-				continue
-			}
-			n, _ := strconv.ParseInt(f[0], 10, 64)
-			d.mi[strings.TrimSpace(p[0])] = n
+	border := ansiCol(t.HDR)
+	pad := func(s string, w int) string {
+		v := visLen(s)
+		if v >= w {
+			return clampVisual(s, w)
 		}
+		return s + strings.Repeat(" ", w-v)
 	}
-	if raw, err := os.ReadFile("/proc/vmstat"); err == nil {
-		for _, line := range strings.Split(string(raw), "\n") {
-			f := strings.Fields(line)
-			if len(f) < 2 {
-				continue
-			}
-			n, _ := strconv.ParseInt(f[1], 10, 64)
-			switch f[0] {
-			case "pgfault":
-				d.pgFault = n
-			case "pswpin":
-				d.swapIn = n
-			case "pswpout":
-				d.swapOut = n
-			}
+
+	var out []string
+	for _, sec := range secs {
+		// top border ╭─ title ──────╮
+		title := sec.title
+		dashes := max(0, innerW-len(title)-4)
+		if title != "" {
+			out = append(out, border+"╭─ "+title+" "+strings.Repeat("─", dashes)+"╮"+RESET)
+		} else {
+			out = append(out, border+"╭"+strings.Repeat("─", innerW)+"╮"+RESET)
 		}
-	}
-	if raw, err := os.ReadFile("/proc/schedstat"); err == nil {
-		for _, line := range strings.Split(string(raw), "\n") {
-			if !strings.HasPrefix(line, "cpu") || strings.HasPrefix(line, "cpu ") {
-				continue
+		// content lines │ … │
+		for _, cl := range sec.body {
+			var text string
+			if cl.Pre {
+				text = clampVisual(cl.Text, innerW)
+			} else {
+				attr := ansiCol(cl.C)
+				if cl.Dim {
+					attr = DIM + attr
+				}
+				text = attr + clampStr(cl.Text, innerW) + RESET
 			}
-			f := strings.Fields(line)
-			if len(f) > 9 {
-				n, _ := strconv.ParseInt(f[9], 10, 64)
-				d.nrSwitches += n
-			}
+			out = append(out, border+"│"+RESET+pad(text, innerW)+border+"│"+RESET)
 		}
+		// bottom ╰──────╯ + blank gap
+		out = append(out, border+"╰"+strings.Repeat("─", innerW)+"╯"+RESET)
+		out = append(out, "")
 	}
-	return d
+	return out
 }
 
 func drawDEV(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Theme) {
 	buf.WriteString(pos(0, 0))
-	buf.WriteString(ansiCol(t.HDR) + BOLD + clampStr(" DEV · MAIN "+strings.Repeat("─", max(0, cols-12)), cols) + RESET + CLEOL)
-	row := 1
+	buf.WriteString(ansiCol(t.HDR) + BOLD + clampStr(" DEV "+strings.Repeat("─", max(0, cols-5)), cols) + RESET + CLEOL)
 
-	d := readDevG()
-
-	sep := func() {
-		if row < rows-3 {
-			buf.WriteString(pos(row, 0) + CLEOL)
-			row++
-		}
+	divX := cols / 2
+	leftW := divX - 1  // left column; 1-char gap before divider
+	rightW := cols - divX - 1 // right column; 1-char gap after divider
+	if leftW < 10 {
+		leftW = 10
 	}
-	emit := func(l string) {
-		if row >= rows-3 {
-			return
-		}
-		buf.WriteString(pos(row, 0))
-		buf.WriteString(l + CLEOL)
-		row++
+	if rightW < 10 {
+		rightW = 10
 	}
 
-	// scheduler
-	swRate := d.nrSwitches - devPrev.nrSwitches
-	swapIn := d.swapIn - devPrev.swapIn
-	swapOut := d.swapOut - devPrev.swapOut
-	emit(ansiCol(t.DISK) + clampStr(fmt.Sprintf(
-		" ctx_switches:%d/s  swap_in:%d  swap_out:%d", swRate, swapIn, swapOut,
-	), cols) + RESET)
-	ss.mu.RLock()
-	ctxHist := append([]float64(nil), ss.HistCtxSw...)
-	ss.mu.RUnlock()
-	if len(ctxHist) > 0 {
-		emit(DIM + ansiCol(t.DISK) + " " + sparkline(ctxHist) + RESET)
-	}
-	sep()
-
-	// kernel tunables
-	tunables := [][2]string{
-		{"/proc/sys/vm/swappiness", "swappiness"},
-		{"/proc/sys/vm/dirty_ratio", "dirty_ratio"},
-		{"/proc/sys/vm/dirty_background_ratio", "dirty_bg"},
-		{"/proc/sys/net/core/somaxconn", "somaxconn"},
-		{"/proc/sys/net/ipv4/tcp_max_syn_backlog", "syn_backlog"},
-		{"/proc/sys/kernel/pid_max", "pid_max"},
-		{"/proc/sys/kernel/random/entropy_avail", "entropy"},
-		{"/proc/sys/fs/file-nr", "fd_used/max"},
-	}
-	var tline []string
-	for _, tu := range tunables {
-		v := "?"
-		if data, err := os.ReadFile(tu[0]); err == nil {
-			v = strings.TrimSpace(strings.ReplaceAll(string(data), "\t", "/"))
-		}
-		tline = append(tline, fmt.Sprintf("%s:%s", tu[1], v))
-		if len(tline) == 4 {
-			emit(ansiCol(t.DISK) + clampStr("  "+strings.Join(tline, "  "), cols) + RESET)
-			tline = tline[:0]
-		}
-	}
-	if len(tline) > 0 {
-		emit(ansiCol(t.DISK) + clampStr("  "+strings.Join(tline, "  "), cols) + RESET)
-	}
-	sep()
-
-	// cpu flags
-	devCPUFlags(buf, &row, cols, rows, t)
-	sep()
-
-	// top IRQs
-	if row < rows-8 {
-		ss.mu.RLock()
-		irqs := ss.IRQs
-		ss.mu.RUnlock()
-		for i := 0; i < 4 && i < len(irqs) && row < rows-6; i++ {
-			irq := irqs[i]
-			c := t.DISK
-			if irq.Delta > 50000 {
-				c = t.WARN
-			}
-			emit(ansiCol(c) + clampStr(fmt.Sprintf(
-				"  %-28s  Δ%-8d  total:%d", irq.Name, irq.Delta, irq.Count,
-			), cols) + RESET)
-		}
-		sep()
+	// purple divider — full height
+	for r := 1; r < rows-1; r++ {
+		buf.WriteString(pos(r, divX))
+		buf.WriteString(ansiCol(t.HDR) + "│" + RESET)
 	}
 
-	// kernel log
-	if row < rows-6 {
-		out := runCmd(1200*time.Millisecond, "dmesg", "--time-format=reltime", "--level=err,warn", "-n", "warn")
-		var kmsgs []string
-		if out != "" {
-			lines := strings.Split(out, "\n")
-			if len(lines) > 4 {
-				lines = lines[len(lines)-4:]
-			}
-			kmsgs = lines
-		}
-		if len(kmsgs) == 0 {
-			emit(DIM + ansiCol(t.USB) + "  (no recent kernel warnings)" + RESET)
+	secLines := buildSecLines(ss, ui, t)
+	optLines, _ := bgOPT.get(collectOPT)
+
+	secRows := buildBoxedRows(secLines, leftW, t)
+	optRows := buildBoxedRows(optLines, rightW, t)
+
+	displayRows := rows - 2 // row 0=hdr, rows-1=statusbar
+	maxH := max(len(secRows), len(optRows))
+	maxScroll := max(0, maxH-displayRows)
+	if ui.SecScroll > maxScroll {
+		ui.SecScroll = maxScroll
+	}
+
+	for r := 0; r < displayRows; r++ {
+		si := ui.SecScroll + r
+		buf.WriteString(pos(r+1, 0))
+
+		// left: SEC
+		if si < len(secRows) {
+			vl := visLen(secRows[si])
+			buf.WriteString(secRows[si] + strings.Repeat(" ", max(0, leftW-vl)))
 		} else {
-			for _, l := range kmsgs {
-				emit(DIM + ansiCol(t.WARN) + clampStr("  "+strings.TrimSpace(l), cols) + RESET)
-			}
+			buf.WriteString(strings.Repeat(" ", leftW))
 		}
-		sep()
+
+		// right: OPT (after divider at divX)
+		buf.WriteString(pos(r+1, divX+1))
+		if si < len(optRows) {
+			buf.WriteString(optRows[si])
+		}
+		buf.WriteString(CLEOL)
 	}
 
-	// pid details
-	if ui.DetailPID > 0 && row < rows-5 {
-		row = devPIDDetails(buf, row, cols, rows, ui.DetailPID, t, ui.Anon)
+	pct := 0
+	if maxH > 0 {
+		pct = (ui.SecScroll + displayRows/2) * 100 / maxH
 	}
-
-	// thread trace — reserve bottom space
-	const traceReserve = 12
-	if row > rows-traceReserve {
-		row = rows - traceReserve
-	}
-	if row < rows-3 {
-		tHdr := "─── THREAD TRACE "
-		tHdr = clampStr(tHdr+strings.Repeat("─", max(0, cols-len(tHdr))), cols)
-		buf.WriteString(pos(row, 0))
-		buf.WriteString(ansiCol(t.HDR) + tHdr + RESET + CLEOL)
-		row++
-
-		traceRows := rows - row - 2
-		if traceRows < 1 {
-			traceRows = 1
-		}
-
-		ss.traceMu.Lock()
-		type tidEntry struct {
-			tid  int
-			comm string
-			ring []TraceEntry
-		}
-		var entries []tidEntry
-		filterPID := ui.DetailPID
-		for tid, ring := range ss.threadRings {
-			if filterPID != 0 && ss.threadPIDs[tid] != filterPID {
-				continue
-			}
-			entries = append(entries, tidEntry{tid, ss.threadComms[tid], append([]TraceEntry(nil), ring...)})
-		}
-		for i := 1; i < len(entries); i++ {
-			for j := i; j > 0 && len(entries[j].ring) > len(entries[j-1].ring); j-- {
-				entries[j], entries[j-1] = entries[j-1], entries[j]
-			}
-		}
-		ss.traceMu.Unlock()
-
-		ncols := max(1, min(len(entries), cols/24))
-		if ncols > 6 {
-			ncols = 6
-		}
-		ui.TraceNCols = ncols
-		tidStart := min(ui.CoreOffset, max(0, len(entries)-ncols))
-		ui.CoreOffset = tidStart
-		colW := cols / ncols
-
-		var traceCols [][]ColLine
-		var traceWidths []int
-		for ci := 0; ci < ncols; ci++ {
-			idx := tidStart + ci
-			var ring []TraceEntry
-			var hdr string
-			if idx < len(entries) {
-				e := entries[idx]
-				ring = e.ring
-				hdr = fmt.Sprintf(" %d:%s", e.tid, e.comm)
-			} else {
-				hdr = " -"
-			}
-			total := len(ring)
-			tcols := []ColLine{{Text: hdr, C: t.CPU, Bold: true}}
-			for ri := 0; ri < traceRows-1; ri++ {
-				ridx := total - 1 - (ui.DevScroll + ri)
-				if ridx < 0 {
-					break
-				}
-				e := ring[ridx]
-				text := e.Syscall
-				if e.Count > 1 {
-					text = fmt.Sprintf("%s×%d", e.Syscall, e.Count)
-				}
-				tcols = append(tcols, ColLine{Text: text, C: t.DISK})
-			}
-			traceCols = append(traceCols, tcols)
-			w := colW
-			if ci == ncols-1 {
-				w = cols - colW*(ncols-1)
-			}
-			traceWidths = append(traceWidths, w)
-		}
-		renderCols(buf, row, traceRows, traceCols, traceWidths, t)
-		row += traceRows
-	}
-
-	for ; row < rows-2; row++ {
-		buf.WriteString(pos(row, 0) + CLEOL)
-	}
-	drawHints(buf, rows-2, cols, ui, t)
-
-	devPrev.nrSwitches = d.nrSwitches
-	devPrev.pgFault = d.pgFault
-	devPrev.swapIn = d.swapIn
-	devPrev.swapOut = d.swapOut
+	fmt.Fprintf(buf, "%s%s %d%%%s%s", pos(rows-2, 0), DIM+ansiCol(t.USB), pct, RESET, CLEOL)
 
 	drawStatusBar(buf, rows, cols, ui, ui.Interval, ss, t)
-}
-
-func devCPUFlags(buf *strings.Builder, row *int, cols, rows int, t *Theme) {
-	var allFlags []string
-	if raw, err := os.ReadFile("/proc/cpuinfo"); err == nil {
-		for _, line := range strings.Split(string(raw), "\n") {
-			if strings.HasPrefix(line, "flags") {
-				if colon := strings.IndexByte(line, ':'); colon >= 0 {
-					allFlags = strings.Fields(line[colon+1:])
-				}
-				break
-			}
-		}
-	}
-	present := map[string]bool{}
-	for _, f := range allFlags {
-		present[f] = true
-	}
-	lb := ""
-	for _, f := range allFlags {
-		if *row >= rows-4 {
-			break
-		}
-		if lb != "" && len(lb)+1+len(f) > cols-1 {
-			buf.WriteString(pos(*row, 0))
-			buf.WriteString(ansiCol(t.DISK) + lb + RESET + CLEOL)
-			*row++
-			lb = f
-		} else {
-			if lb == "" {
-				lb = f
-			} else {
-				lb += " " + f
-			}
-		}
-	}
-	if lb != "" && *row < rows-4 {
-		buf.WriteString(pos(*row, 0))
-		buf.WriteString(ansiCol(t.DISK) + lb + RESET + CLEOL)
-		*row++
-	}
-	want := []string{
-		"fpu", "vme", "de", "pse", "tsc", "msr", "pae", "mce", "cx8", "apic",
-		"sep", "mtrr", "pge", "mca", "cmov", "pat", "pse36", "clflush", "mmx",
-		"fxsr", "sse", "sse2", "ss", "ht", "syscall", "nx", "lm", "nopl",
-		"pni", "ssse3", "cx16", "sse4_1", "sse4_2", "popcnt",
-		"avx", "avx2", "avx512f", "avx512dq", "avx512bw", "avx512vl",
-		"f16c", "fma",
-		"aes", "pclmulqdq", "sha_ni", "rdrand", "rdseed", "smep", "smap",
-		"vmx", "svm", "bmi1", "bmi2", "adx", "lzcnt",
-		"ibrs", "ibpb", "stibp", "ssbd",
-	}
-	lb = ""
-	for _, f := range want {
-		if present[f] {
-			continue
-		}
-		if *row >= rows-4 {
-			break
-		}
-		if lb != "" && len(lb)+1+len(f) > cols-1 {
-			buf.WriteString(pos(*row, 0))
-			buf.WriteString(ansiCol(t.WARN) + lb + RESET + CLEOL)
-			*row++
-			lb = f
-		} else {
-			if lb == "" {
-				lb = f
-			} else {
-				lb += " " + f
-			}
-		}
-	}
-	if lb != "" && *row < rows-4 {
-		buf.WriteString(pos(*row, 0))
-		buf.WriteString(ansiCol(t.WARN) + lb + RESET + CLEOL)
-		*row++
-	}
-}
-
-func devPIDDetails(buf *strings.Builder, row, cols, rows, pid int, t *Theme, anon bool) int {
-	oom, _ := os.ReadFile(fmt.Sprintf("/proc/%d/oom_score", pid))
-	oomAdj, _ := os.ReadFile(fmt.Sprintf("/proc/%d/oom_score_adj", pid))
-	cgRaw, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
-	cg := ""
-	if parts := strings.SplitN(strings.TrimSpace(string(cgRaw)), ":", 3); len(parts) == 3 {
-		cg = parts[2]
-	}
-	nsEntries, _ := os.ReadDir(fmt.Sprintf("/proc/%d/ns", pid))
-	var nsNames []string
-	for _, e := range nsEntries {
-		nsNames = append(nsNames, e.Name())
-	}
-	cgDisplay := cg
-	if anon && cgDisplay != "" {
-		cgDisplay = "[***]"
-	}
-	if row < rows-3 {
-		buf.WriteString(pos(row, 0))
-		buf.WriteString(ansiCol(t.DISK) + clampStr(fmt.Sprintf(
-			"  oom:%s adj:%s  cg:%s",
-			strings.TrimSpace(string(oom)), strings.TrimSpace(string(oomAdj)), cgDisplay,
-		), cols) + RESET + CLEOL)
-		row++
-	}
-	if row < rows-3 && len(nsNames) > 0 {
-		buf.WriteString(pos(row, 0))
-		buf.WriteString(DIM + ansiCol(t.DISK) + clampStr("  ns: "+strings.Join(nsNames, " "), cols) + RESET + CLEOL)
-		row++
-	}
-	if anon {
-		return row
-	}
-	scRaw, err := os.ReadFile(fmt.Sprintf("/proc/%d/syscall", pid))
-	if err != nil {
-		return row
-	}
-	sc := strings.Fields(string(scRaw))
-	if len(sc) == 1 && sc[0] == "running" {
-		if row < rows-3 {
-			buf.WriteString(pos(row, 0))
-			buf.WriteString(DIM + ansiCol(t.USB) + "  [running in userspace — regs visible only during syscall]" + RESET + CLEOL)
-			row++
-		}
-		return row
-	}
-	if len(sc) != 9 {
-		return row
-	}
-	names := []string{"rax", "rdi", "rsi", "rdx", "r10", "r8 ", "r9 ", "rsp", "rip"}
-	perLine := max(1, cols/30)
-	for i := 0; i < 9 && row < rows-3; i += perLine {
-		var pairs []string
-		for j := 0; j < perLine && i+j < 9; j++ {
-			pairs = append(pairs, fmt.Sprintf("%s:%s", names[i+j], sc[i+j]))
-		}
-		buf.WriteString(pos(row, 0))
-		buf.WriteString(ansiCol(t.DISK) + clampStr("  "+strings.Join(pairs, "  "), cols) + RESET + CLEOL)
-		row++
-	}
-	if nr, err := strconv.ParseInt(sc[0], 0, 64); err == nil && row < rows-3 {
-		name := syscallName(int(nr))
-		buf.WriteString(pos(row, 0))
-		buf.WriteString(ansiCol(t.SEL) + clampStr(fmt.Sprintf("  syscall: %s(%d)", name, nr), cols) + RESET + CLEOL)
-		row++
-	}
-	if row < rows-5 {
-		buf.WriteString(pos(row, 0))
-		buf.WriteString(DIM + ansiCol(t.USB) + clampStr(fmt.Sprintf("  disasm @ rip %s:", sc[8]), cols) + RESET + CLEOL)
-		row++
-		for _, dline := range disasmAtRIP(pid, sc[8], rows-row-3) {
-			if row >= rows-3 {
-				break
-			}
-			buf.WriteString(pos(row, 0))
-			buf.WriteString(ansiCol(t.DISK) + clampStr(dline, cols) + RESET + CLEOL)
-			row++
-		}
-	}
-	return row
 }
