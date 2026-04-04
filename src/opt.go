@@ -84,124 +84,119 @@ func checkTHP() string {
 	return s
 }
 
-type optItem struct {
-	label string
-	val   string
-	good  bool
-	note  string
-	dim   bool
-}
+func collectOPT() []ColLine {
+	var lines []ColLine
 
-func collectOPT() []optItem {
-	var items []optItem
-
-	section := func(name string) {
-		items = append(items, optItem{label: "\x00" + name})
+	addh := func(name string) {
+		lines = append(lines, ColLine{Text: " " + BOLD + name, Pre: false, Bold: true})
 	}
-	add := func(label, val string, good bool, note string) {
-		items = append(items, optItem{label: label, val: val, good: good, note: note})
+	addl := func(label, val string, c Color) {
+		text := fmt.Sprintf("  %s%-24s%s%s%s", DIM, label, RESET, ansiCol(c), val)
+		lines = append(lines, ColLine{Text: text, Pre: true})
 	}
-	na := func(label string) {
-		items = append(items, optItem{label: label, val: "n/a", good: true, dim: true})
+	addn := func(label string) {
+		text := fmt.Sprintf("  %s%-24s%s%s%s", DIM, label, RESET, DIM, "n/a")
+		lines = append(lines, ColLine{Text: text, Pre: true, Dim: true})
 	}
 
-	// ── CPU ──────────────────────────────────────────────────────────────────
-	section("cpu")
+	bc := func(good bool, t ...Color) Color {
+		if good {
+			return Color{0, 255, 65}
+		}
+		return Color{255, 0, 0}
+	}
+	_ = bc
+
+	ok   := Color{0, 255, 65}
+	warn := Color{255, 0, 0}
+	inf  := Color{100, 100, 100}
+	good := func(g bool) Color { if g { return ok }; return warn }
+
+	// ── cpu ──────────────────────────────────────────────────────────────────
+	addh("cpu")
 	gov, govGood := governorSummary()
-	add("governor", gov, govGood, "performance or schedutil recommended")
+	addl("governor", gov, good(govGood))
 	turboRaw, err := os.ReadFile("/sys/devices/system/cpu/cpufreq/boost")
 	if err != nil {
 		turboRaw, err = os.ReadFile("/sys/devices/system/cpu/intel_pstate/no_turbo")
 	}
 	if err == nil {
 		v := strings.TrimSpace(string(turboRaw))
-		add("turbo", map[string]string{"1": "enabled", "0": "disabled"}[v], v == "1", "")
+		addl("turbo", map[string]string{"1": "enabled", "0": "disabled"}[v], good(v == "1"))
 	} else {
-		na("turbo")
+		addn("turbo")
 	}
 	irqbal := checkServiceRunning("irqbalance")
-	add("irqbalance", map[bool]string{true: "running", false: "stopped"}[irqbal], irqbal, "spreads IRQs across cores")
+	addl("irqbalance", map[bool]string{true: "running", false: "stopped"}[irqbal], good(irqbal))
 	nohz := readSysctlOpt("kernel.nohz_full")
 	if nohz != "?" {
-		add("nohz_full", nohz, nohz != "", "")
+		addl("nohz_full", nohz, inf)
 	}
 
 	// ── memory ───────────────────────────────────────────────────────────────
-	section("memory")
+	addh("memory")
 	swap := readSysctlOpt("vm.swappiness")
 	swapN, _ := strconv.Atoi(swap)
-	add("vm.swappiness", swap, swapN <= 20, fmt.Sprintf("current:%s  desktop≤10 server≤5", swap))
-
+	addl("vm.swappiness", swap, good(swapN <= 20))
 	dirty := readSysctlOpt("vm.dirty_ratio")
 	dirtyBg := readSysctlOpt("vm.dirty_background_ratio")
-	add("dirty_ratio", dirty+"/"+dirtyBg, true, "write_ratio/background_ratio")
-
+	addl("dirty_ratio/bg", dirty+"/"+dirtyBg, inf)
 	thp := checkTHP()
-	thpGood := thp == "madvise" || thp == "never"
-	add("transparent_hugepage", thp, thpGood, "madvise for low latency, always for throughput")
-
+	addl("transparent_hugepage", thp, good(thp == "madvise" || thp == "never"))
 	overcommit := readSysctlOpt("vm.overcommit_memory")
-	add("overcommit_memory", map[string]string{"0": "heuristic", "1": "always", "2": "strict"}[overcommit]+" ("+overcommit+")", overcommit != "1", "")
-
+	addl("overcommit_memory", map[string]string{"0": "heuristic", "1": "always", "2": "strict"}[overcommit]+" ("+overcommit+")", good(overcommit != "1"))
 	compaction := readSysctlOpt("vm.compaction_proactiveness")
 	if compaction != "?" {
 		cN, _ := strconv.Atoi(compaction)
-		add("compaction_proactiveness", compaction, cN > 0, "higher = less fragmentation")
+		addl("compaction_proactive", compaction, good(cN > 0))
 	}
 
 	// ── i/o ──────────────────────────────────────────────────────────────────
-	section("i/o")
+	addh("i/o")
 	for _, sched := range ioSchedulers() {
 		parts := strings.SplitN(sched, ":", 2)
 		if len(parts) != 2 {
 			continue
 		}
 		dev, sc := parts[0], parts[1]
-		goodSched := sc == "none" || sc == "mq-deadline" || sc == "kyber"
 		ra := readAheadKB(dev)
-		raStr := ""
+		val := sc
 		if ra >= 0 {
-			raStr = fmt.Sprintf("  read_ahead:%dkb", ra)
+			val += fmt.Sprintf("  ra:%dkb", ra)
 		}
-		add(dev, sc+raStr, goodSched, "none/mq-deadline for SSD, bfq for HDD")
+		addl(dev, val, good(sc == "none" || sc == "mq-deadline" || sc == "kyber"))
 	}
 	nrReq := readSysctlOpt("block.nr_requests")
 	if nrReq != "?" {
-		add("nr_requests", nrReq, true, "")
+		addl("nr_requests", nrReq, inf)
 	}
 
 	// ── network ──────────────────────────────────────────────────────────────
-	section("network")
+	addh("network")
 	cc := readSysctlOpt("net.ipv4.tcp_congestion_control")
-	add("tcp_congestion", cc, cc == "bbr" || cc == "bbr2", "bbr recommended for most workloads")
-
+	addl("tcp_congestion", cc, good(cc == "bbr" || cc == "bbr2"))
 	rmem := readSysctlOpt("net.core.rmem_max")
 	wmem := readSysctlOpt("net.core.wmem_max")
 	rmemN, _ := strconv.Atoi(rmem)
 	wmemN, _ := strconv.Atoi(wmem)
-	add("socket buffers", fmt.Sprintf("rx:%s tx:%s", fmtBufSize(rmemN), fmtBufSize(wmemN)), rmemN >= 4*1024*1024, "≥4MB recommended for high throughput")
-
+	addl("socket_buf rx/tx", fmt.Sprintf("%s/%s", fmtBufSize(rmemN), fmtBufSize(wmemN)), good(rmemN >= 4*1024*1024))
 	tfo := readSysctlOpt("net.ipv4.tcp_fastopen")
-	add("tcp_fastopen", map[string]string{"0": "off", "1": "client", "2": "server", "3": "both"}[tfo]+" ("+tfo+")", tfo == "3", "3=client+server")
-
+	addl("tcp_fastopen", map[string]string{"0": "off", "1": "client", "2": "server", "3": "both"}[tfo]+" ("+tfo+")", good(tfo == "3"))
 	ts := readSysctlOpt("net.ipv4.tcp_timestamps")
-	add("tcp_timestamps", map[string]string{"0": "off", "1": "on"}[ts], ts == "1", "needed for PAWS/RTTM")
-
+	addl("tcp_timestamps", map[string]string{"0": "off", "1": "on"}[ts], good(ts == "1"))
 	somaxconn := readSysctlOpt("net.core.somaxconn")
 	smN, _ := strconv.Atoi(somaxconn)
-	add("somaxconn", somaxconn, smN >= 1024, "≥1024 for busy servers")
+	addl("somaxconn", somaxconn, good(smN >= 1024))
 
 	// ── filesystem ───────────────────────────────────────────────────────────
-	section("filesystem")
+	addh("filesystem")
 	inoti := readSysctlOpt("fs.inotify.max_user_watches")
 	iN, _ := strconv.Atoi(inoti)
-	add("inotify.max_user_watches", inoti, iN >= 65536, "≥65536 for IDEs/large projects")
-
+	addl("inotify.max_watches", inoti, good(iN >= 65536))
 	fdNr := readSysctlOpt("fs.file-nr")
 	if f := strings.Fields(fdNr); len(f) > 0 {
-		add("open file handles", f[0], true, "")
+		addl("open_file_handles", f[0], inf)
 	}
-
 	noatimeMounts := 0
 	if raw, err := os.ReadFile("/proc/mounts"); err == nil {
 		for _, line := range strings.Split(string(raw), "\n") {
@@ -210,9 +205,9 @@ func collectOPT() []optItem {
 			}
 		}
 	}
-	add("noatime/relatime mounts", fmt.Sprintf("%d", noatimeMounts), noatimeMounts > 0, "reduces disk writes")
+	addl("noatime/relatime mounts", fmt.Sprintf("%d", noatimeMounts), good(noatimeMounts > 0))
 
-	return items
+	return lines
 }
 
 func drawOPT(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Theme) {
@@ -220,54 +215,112 @@ func drawOPT(buf *strings.Builder, rows, cols int, ss *SysState, ui *UI, t *Them
 	buf.WriteString(pos(0, 0))
 	buf.WriteString(ansiCol(t.HDR) + BOLD + clampStr(hdr, cols) + RESET + CLEOL)
 
-	ok   := t.DISK
-	warn := t.WARN
-	inf  := t.USB
+	lines, _ := bgOPT.get(collectOPT)
 
-	bc := func(good bool) Color {
-		if good { return ok }
-		return warn
+	// same multi-column layout as SEC
+	nCols := 1
+	if cols >= 140 {
+		nCols = 3
+	} else if cols >= 80 {
+		nCols = 2
 	}
 
-	items, loading := bgOPT.get(collectOPT)
+	type span struct{ s, e int }
+	var sections []span
+	secStart := 0
+	for i, l := range lines {
+		if i > 0 && l.Bold {
+			sections = append(sections, span{secStart, i})
+			secStart = i
+		}
+	}
+	sections = append(sections, span{secStart, len(lines)})
 
-	contentRows := rows - 2
-	maxScroll := max(0, len(items)-contentRows)
+	totalLines := len(lines)
+	targetH := (totalLines + nCols - 1) / nCols
+	colData := make([][]ColLine, nCols)
+	ci := 0
+	curH := 0
+	for _, sp := range sections {
+		h := sp.e - sp.s
+		if ci < nCols-1 && curH > 0 && curH+h > targetH {
+			ci++
+			curH = 0
+		}
+		colData[ci] = append(colData[ci], lines[sp.s:sp.e]...)
+		curH += h
+	}
+
+	widths := make([]int, nCols)
+	for i, col := range colData {
+		w := 10
+		for _, l := range col {
+			if vl := visualLen(l.Text); vl > w {
+				w = vl
+			}
+		}
+		widths[i] = w + 1
+	}
+	used := 0
+	for i := 0; i < nCols-1; i++ {
+		used += widths[i]
+	}
+	if rem := cols - used; rem > widths[nCols-1] {
+		widths[nCols-1] = rem
+	}
+	total := 0
+	for _, w := range widths {
+		total += w
+	}
+	if total > cols {
+		even := cols / nCols
+		for i := range widths {
+			widths[i] = even
+		}
+		widths[nCols-1] = cols - even*(nCols-1)
+	}
+
+	displayRows := rows - 2
+	maxColH := 0
+	for _, col := range colData {
+		if len(col) > maxColH {
+			maxColH = len(col)
+		}
+	}
+	maxScroll := max(0, maxColH-displayRows)
 	if ui.OptScroll > maxScroll {
 		ui.OptScroll = maxScroll
 	}
 
-	dim := DIM + ansiCol(t.USB)
-	for r := 0; r < contentRows; r++ {
-		idx := ui.OptScroll + r
-		buf.WriteString(pos(r+1, 0))
-		if idx >= len(items) {
-			buf.WriteString(CLEOL)
-			continue
-		}
-		it := items[idx]
-		var line string
-		if strings.HasPrefix(it.label, "\x00") {
-			name := it.label[1:]
-			line = ansiCol(t.HDR) + BOLD + name + RESET + ansiCol(t.HDR) +
-				strings.Repeat("─", max(0, cols-len(name)-1)) + RESET
-		} else {
-			col := bc(it.good)
-			if it.dim {
-				line = dim + fmt.Sprintf("  %-28s  %s", it.label, it.val) + RESET
-			} else {
-				status := ansiCol(col)
-				note := ""
-				if it.note != "" {
-					note = dim + "  # " + it.note + RESET
+	for row := 0; row < displayRows; row++ {
+		buf.WriteString(pos(row+1, 0))
+		for ci, col := range colData {
+			w := widths[ci]
+			idx := ui.OptScroll + row
+			if idx < len(col) {
+				l := col[idx]
+				if l.Pre {
+					clamped := clampVisual(l.Text, w)
+					pad := strings.Repeat(" ", max(0, w-visualLen(clamped)))
+					buf.WriteString(clamped + pad + RESET)
+				} else {
+					runes := []rune(l.Text)
+					if len(runes) > w {
+						runes = runes[:w]
+					}
+					text := string(runes) + strings.Repeat(" ", max(0, w-len(runes)))
+					attr := ansiCol(t.HDR)
+					if l.Bold {
+						attr = BOLD + attr
+					}
+					buf.WriteString(attr + text + RESET)
 				}
-				line = ansiCol(inf) + fmt.Sprintf("  %-28s  ", it.label) + RESET +
-					status + it.val + RESET + note
+			} else {
+				buf.WriteString(strings.Repeat(" ", w))
 			}
 		}
-		buf.WriteString(clampVisual(line, cols) + CLEOL)
+		buf.WriteString(CLEOL)
 	}
 
-	_ = loading
 	drawStatusBar(buf, rows, cols, ui, ui.Interval, ss, t)
 }

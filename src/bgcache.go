@@ -57,7 +57,7 @@ var (
 	bgLastLogin = &bgVal[string]{ttl: 30 * time.Second}
 	bgCaps      = &bgVal[[]string]{ttl: 10 * time.Second}
 	bgWWDirs    = &bgVal[[]string]{ttl: 30 * time.Second}
-	bgOPT       = &bgVal[[]optItem]{ttl: 5 * time.Second}
+	bgOPT       = &bgVal[[]ColLine]{ttl: 5 * time.Second}
 )
 
 func bgGetPending() (int, bool) {
