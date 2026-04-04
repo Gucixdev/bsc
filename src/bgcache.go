@@ -10,7 +10,8 @@ import (
 var spinTick atomic.Uint32
 
 func spinChar() string {
-	return string([]rune(`-\|/`)[spinTick.Load()%4])
+	frames := []rune("⣾⣽⣻⢿⡿⣟⣯⣷")
+	return string(frames[spinTick.Load()%uint32(len(frames))])
 }
 
 // bgVal — generic background-refreshed cached value.

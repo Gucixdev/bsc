@@ -88,7 +88,7 @@ func collectOPT() []ColLine {
 	var lines []ColLine
 
 	addh := func(name string) {
-		lines = append(lines, ColLine{Text: " " + BOLD + name, Pre: false, Bold: true})
+		lines = append(lines, ColLine{Text: " " + BOLD + name, Pre: false, Bold: true, Title: name})
 	}
 	addl := func(label, val string, c Color) {
 		text := fmt.Sprintf("  %s%-24s%s%s%s", DIM, label, RESET, ansiCol(c), val)
