@@ -405,6 +405,10 @@ func handleKey(b byte, inputCh <-chan byte, ui *UI, ss *SysState) bool {
 		collectIntervalNs.Store(int64(ui.Interval))
 	case 'R':
 		toggleRecording(ui)
+	case 'e':
+		if ui.Tab == TAB_DEV {
+			devExport(ss, ui)
+		}
 	case 'c':
 		if ui.Tab == TAB_OVW {
 			ui.Sort = SORT_CPU
@@ -637,6 +641,7 @@ func cycleAltAction(ui *UI) {
 			ui.Detail = false
 		}
 	case TAB_DEV:
+		ui.DevView = (ui.DevView + 1) % 2
 		ui.SecScroll = 0
 	case TAB_HEX:
 		ui.HexSource = (ui.HexSource + 1) % 4

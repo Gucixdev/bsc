@@ -67,9 +67,10 @@ func drawStatusBar(buf *strings.Builder, rows, cols int, ui *UI, interval time.D
 			left += " [FRZ]"
 		}
 	case TAB_DEV:
-		left = "DEV " +
+		left = "DEV·" + [2]string{"MAIN", "SEC/OPT"}[ui.DevView] + " " +
 			kb("↑") + kb("↓") + " scroll " +
-			kb("Esc") + " top " +
+			kb("Esc") + " src " +
+			kb("e") + " export " +
 			kb("⇥") + " tab"
 	case TAB_HEX:
 		srcName := [4]string{"MEM", "DISK", "NET", "VRAM"}[ui.HexSource]

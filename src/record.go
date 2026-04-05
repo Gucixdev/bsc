@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -30,6 +31,35 @@ func toggleRecording(ui *UI) {
 	recFile = f
 	lastRecordAt = time.Time{} // force immediate first write
 	ui.Recording = true
+}
+
+// devExport — one-shot plain-text dump of SEC+OPT to ~/.local/share/bsc/TIMESTAMP-dev.txt
+func devExport(ss *SysState, ui *UI) {
+	dir := os.Getenv("HOME") + "/.local/share/bsc"
+	_ = os.MkdirAll(dir, 0755)
+	name := dir + "/" + time.Now().Format("20060102-150405") + "-dev.txt"
+	f, err := os.Create(name)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	fmt.Fprintf(f, "=== BSC DEV EXPORT — %s ===\n\n", time.Now().Format("2006-01-02 15:04:05"))
+
+	zt := &Theme{}
+	plainRows := func(lines []ColLine) {
+		for _, row := range buildBoxedRows(lines, 62, zt) {
+			fmt.Fprintln(f, strings.TrimRight(stripANSI(row), " "))
+		}
+	}
+
+	secLines, _ := bgSEC.get(func() []ColLine { return buildSecLines(ss, ui, zt) })
+	optLines, _ := bgOPT.get(collectOPT)
+
+	fmt.Fprintln(f, "=== SEC ===")
+	plainRows(secLines)
+	fmt.Fprintln(f, "\n=== OPT ===")
+	plainRows(optLines)
 }
 
 // writeRecord — called from render loop; writes one snapshot per collect interval

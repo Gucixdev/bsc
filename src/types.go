@@ -255,4 +255,5 @@ type UI struct {
 	AsmSearchMode  bool
 	HexSkipZero    bool
 	HexBPR         int // bytes per row, set each render
+	DevView        int // 0=both 1=SEC 2=OPT
 }
