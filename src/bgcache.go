@@ -58,7 +58,10 @@ var (
 	bgLastLogin = &bgVal[string]{ttl: 30 * time.Second}
 	bgCaps      = &bgVal[[]string]{ttl: 10 * time.Second}
 	bgWWDirs    = &bgVal[[]string]{ttl: 30 * time.Second}
-	bgOPT       = &bgVal[[]ColLine]{ttl: 5 * time.Second}
+	bgOPT        = &bgVal[[]ColLine]{ttl: 5 * time.Second}
+	bgSEC        = &bgVal[[]ColLine]{ttl: 3 * time.Second}
+	bgDevG       = &bgVal[devGlobal]{ttl: 1 * time.Second}
+	bgKernelLog  = &bgVal[[]string]{ttl: 5 * time.Second}
 )
 
 func bgGetPending() (int, bool) {
@@ -108,6 +111,9 @@ func anyBgLoading() bool {
 		func() bool { bgCaps.mu.Lock(); v := bgCaps.loading; bgCaps.mu.Unlock(); return v },
 		func() bool { bgWWDirs.mu.Lock(); v := bgWWDirs.loading; bgWWDirs.mu.Unlock(); return v },
 		func() bool { bgOPT.mu.Lock(); v := bgOPT.loading; bgOPT.mu.Unlock(); return v },
+		func() bool { bgSEC.mu.Lock(); v := bgSEC.loading; bgSEC.mu.Unlock(); return v },
+		func() bool { bgDevG.mu.Lock(); v := bgDevG.loading; bgDevG.mu.Unlock(); return v },
+		func() bool { bgKernelLog.mu.Lock(); v := bgKernelLog.loading; bgKernelLog.mu.Unlock(); return v },
 		func() bool { asmMu.Lock(); v := asmCache.loading; asmMu.Unlock(); return v },
 	} {
 		if check() {

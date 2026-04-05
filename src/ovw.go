@@ -781,20 +781,16 @@ func drawMemMapBar(buf *strings.Builder, row, cols int, t *Theme) {
 	}
 	buf.WriteString(CLEOL)
 
-	// label row
+	// legend row: ▪ kern:5%  ▪ anon:45% ... (skip zero-kb segments)
 	buf.WriteString(pos(row+1, 0))
-	for i, s := range segs {
-		n := widths[i]
-		if n == 0 {
+	sep := ""
+	for _, s := range segs {
+		if s.kb == 0 {
 			continue
 		}
-		lbl := s.lbl
-		if len(lbl) > n {
-			lbl = lbl[:n]
-		} else {
-			lbl += strings.Repeat(" ", n-len(lbl))
-		}
-		buf.WriteString(DIM + ansiCol(s.c) + lbl + RESET)
+		pct := int(100 * s.kb / totKB)
+		buf.WriteString(sep + DIM + ansiCol(s.c) + "▪" + RESET + DIM + " " + s.lbl + ":" + fmt.Sprintf("%d%%", pct) + RESET)
+		sep = "  "
 	}
 	buf.WriteString(CLEOL)
 }
@@ -893,10 +889,10 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 		colData = append(colData, s.data)
 	}
 
-	renderCols(buf, 0, topH, colData, colWidths, t)
-
-	// compact memory map: 2 rows between top panels and proc list
-	drawMemMapBar(buf, topH, cols, t)
+	// memory map at very top — 2 rows (bar + legend)
+	drawMemMapBar(buf, 0, cols, t)
+	// panels start at row 2
+	renderCols(buf, 2, topH, colData, colWidths, t)
 
 	procs := filterProcs(allProcs, ui.Filter)
 	if ui.Sort == SORT_MEM {
@@ -1073,7 +1069,7 @@ func drawOVW(buf *strings.Builder, rows, cols int,
 
 	hdrLine2 := fmt.Sprintf("   %-*s %s %-*s %s %-*s %s T %s CMD",
 		wPID, "PID", ui_, wCPU, "CPU%", ui_, wMEM, "MEM", ui_, ui_)
-	buf.WriteString(pos(topH+1, 0))
+	buf.WriteString(pos(topH+3, 0))
 	buf.WriteString(DIM + clampVisual(hdrLine2, cols) + RESET + CLEOL)
 
 	for i, dp := range display[ui.Scroll:end] {

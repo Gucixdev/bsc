@@ -454,3 +454,24 @@ func readUptime() int64 {
 	f, _ := strconv.ParseFloat(fields[0], 64)
 	return int64(f)
 }
+
+// stripANSI removes ESC[...m escape sequences, leaving plain text + unicode
+func stripANSI(s string) string {
+	var b strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == '\033' && i+1 < len(s) && s[i+1] == '[' {
+			i += 2
+			for i < len(s) && !((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z')) {
+				i++
+			}
+			if i < len(s) {
+				i++
+			}
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}

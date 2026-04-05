@@ -6,6 +6,10 @@ __pycache__/
 *~
 /bsc
 /go/bsc
+src/bsc
 /tmp/
 /todo.md
 pip-boy
+CLAUDE.md
+devlog
+claudetool.json

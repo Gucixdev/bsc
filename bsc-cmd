@@ -44,7 +44,10 @@ do_build() {
     go)
         echo "→ building Go..."
         (cd "$ROOT/src" && CGO_ENABLED=0 go build -ldflags='-s -w' -o "$ROOT/$NAME" .)
-        echo "✓ $ROOT/$NAME  ($(du -sh "$ROOT/$NAME" | cut -f1))"
+        mkdir -p "$BIN"
+        cp "$ROOT/$NAME" "$BIN/$NAME"
+        chmod 755 "$BIN/$NAME"
+        echo "✓ $BIN/$NAME  ($(du -sh "$BIN/$NAME" | cut -f1))"
         ;;
     py)
         ENTRY="$ROOT/python/bscmono.py"
@@ -410,10 +413,10 @@ PATHS
   config $CFG
 
 EXAMPLES
-  bash bsc-cmd build go
-  bash bsc-cmd install go -y
+  bash bsc-cmd build go        (builds + installs to $BIN)
+  bash bsc-cmd install py      (install Python wrapper)
   bsc-cmd build go
-  bsc-cmd install go -y
+  bsc-cmd deps -m
   bsc-cmd uninstall
 EOF
 }
