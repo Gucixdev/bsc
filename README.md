@@ -27,3 +27,7 @@ bsc        # auto re-execs via sudo if not root
 ---
 
 `a` = anonymous mode (hides IPs/MACs/users for screenshots)
+
+---
+
+> **Note:** This project will most likely be abandoned or rewritten in a different language. Use at your own risk.
